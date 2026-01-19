@@ -8,7 +8,7 @@ impl DataverseClient {
     /// Get all global option sets
     pub async fn get_global_option_sets(&self) -> Result<Vec<OptionSetMetadata>> {
         let response: ODataResponse<OptionSetMetadata> = self
-            .get_json("OptionSetDefinitions?$select=Name,DisplayName,Description,IsGlobal,OptionSetType,MetadataId")
+            .get_json("GlobalOptionSetDefinitions?$select=Name,DisplayName,Description,IsGlobal,OptionSetType,MetadataId")
             .await?;
         Ok(response.value)
     }
