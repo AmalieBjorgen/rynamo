@@ -10,6 +10,7 @@ mod api;
 mod auth;
 mod models;
 mod ui;
+mod export;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -121,6 +122,11 @@ async fn run_app(
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
+                }
+
+                // Clear any global message on any keypress
+                if app.message.is_some() {
+                    app.clear_message();
                 }
 
                 match app.input_mode {
@@ -270,6 +276,11 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                         'n' => {
                             if app.query_mode == crate::ui::QueryMode::Results {
                                 app.load_next_page().await;
+                            }
+                        }
+                        'e' => {
+                            if app.query_mode == crate::ui::QueryMode::Results {
+                                app.export_query_results();
                             }
                         }
                         _ => {}

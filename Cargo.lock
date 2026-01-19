@@ -1909,6 +1909,7 @@ dependencies = [
  "anyhow",
  "azure_core",
  "azure_identity",
+ "chrono",
  "clap",
  "crossterm",
  "dirs",

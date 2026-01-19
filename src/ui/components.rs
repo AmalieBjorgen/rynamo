@@ -822,10 +822,17 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    let message_text = if let Some(msg) = &app.message {
+        format!(" │ {} ", msg)
+    } else {
+        String::new()
+    };
+
     let status = Line::from(vec![
         state_indicator,
         Span::raw(format!("│ {} ", env)),
         Span::styled(search_hint, Style::default().fg(Color::Magenta)),
+        Span::styled(message_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     ]);
 
     let paragraph = Paragraph::new(status).block(Block::default().borders(Borders::ALL));

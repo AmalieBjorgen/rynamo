@@ -39,3 +39,6 @@ toml = "0.8"
 # Logging (optional for debugging)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utility
+chrono = "0.4"

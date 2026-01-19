@@ -154,6 +154,9 @@ pub struct App {
     pub selected_record_index: Option<usize>,
     pub record_detail_index: usize,
 
+    // Feedback message
+    pub message: Option<String>,
+
     /// Should quit
     pub should_quit: bool,
 }
@@ -304,6 +307,7 @@ impl App {
             query_editing: false,
             selected_record_index: None,
             record_detail_index: 0,
+            message: None,
             should_quit: false,
         }
     }
@@ -1224,5 +1228,29 @@ impl App {
         {
             self.query_result_index += 1;
         }
+    }
+
+    /// Export current query results
+    pub fn export_query_results(&mut self) {
+        if self.query_result.rows.is_empty() {
+            self.message = Some("No results to export".to_string());
+            return;
+        }
+
+        let entity_name = self.selected_entity.as_ref().map(|e| e.logical_name.clone()).unwrap_or_else(|| "export".to_string());
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let filename = format!("{}_{}.csv", entity_name, timestamp);
+        let path_str = format!("exports/{}", filename);
+        let path = std::path::Path::new(&path_str);
+
+        match crate::export::export_results(&self.query_result, crate::export::ExportFormat::Csv, path) {
+            Ok(p) => self.message = Some(format!("Exported to {}", p)),
+            Err(e) => self.message = Some(format!("Export failed: {}", e)),
+        }
+    }
+
+    /// Clear the feedback message
+    pub fn clear_message(&mut self) {
+        self.message = None;
     }
 }
