@@ -21,6 +21,7 @@ pub enum View {
     UserDetail,
     RecordDetail,
     OptionSets,
+    GlobalSearch,
 }
 
 /// Application state for the TUI
@@ -51,6 +52,13 @@ pub enum QueryMode {
     OrderBy,    // Select order by column
     Options,    // Top, skip options
     Results,    // View results
+}
+
+#[derive(Debug, Clone)]
+pub enum SearchResult {
+    Entity(usize),     // Index in entities
+    Solution(usize),   // Index in solutions
+    OptionSet(usize),  // Index in global_optionsets
 }
 
 /// Detail tab for user view
@@ -118,6 +126,10 @@ pub struct App {
     pub filtered_optionsets: Vec<usize>,
     pub optionset_index: usize,
     pub selected_optionset: Option<OptionSetMetadata>,
+
+    // Global Search state
+    pub global_search_results: Vec<SearchResult>,
+    pub global_search_index: usize,
 
     // User list state
     pub users: Vec<SystemUser>,
@@ -280,6 +292,8 @@ impl App {
             filtered_optionsets: Vec::new(),
             optionset_index: 0,
             selected_optionset: None,
+            global_search_results: Vec::new(),
+            global_search_index: 0,
             users: Vec::new(),
             filtered_users: Vec::new(),
             user_index: 0,
@@ -640,6 +654,11 @@ impl App {
                     self.optionset_index -= 1;
                 }
             }
+            View::GlobalSearch => {
+                if self.global_search_index > 0 {
+                    self.global_search_index -= 1;
+                }
+            }
         }
     }
 
@@ -752,6 +771,13 @@ impl App {
                     && self.optionset_index < self.filtered_optionsets.len() - 1
                 {
                     self.optionset_index += 1;
+                }
+            }
+            View::GlobalSearch => {
+                if !self.global_search_results.is_empty()
+                    && self.global_search_index < self.global_search_results.len() - 1
+                {
+                    self.global_search_index += 1;
                 }
             }
         }
@@ -1029,6 +1055,80 @@ impl App {
                 .collect();
         }
         self.optionset_index = 0;
+    }
+
+    /// Execute search across all cached metadata
+    pub fn execute_global_search(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.global_search_results.clear();
+            return;
+        }
+
+        let mut results = Vec::new();
+
+        // 1. Entities
+        for (i, entity) in self.entities.iter().enumerate() {
+            if entity.logical_name.to_lowercase().contains(&query)
+                || entity.get_display_name().to_lowercase().contains(&query)
+            {
+                results.push(SearchResult::Entity(i));
+            }
+        }
+
+        // 2. Solutions
+        for (i, solution) in self.solutions.iter().enumerate() {
+            if solution.unique_name.to_lowercase().contains(&query)
+                || solution.get_display_name().to_lowercase().contains(&query)
+            {
+                results.push(SearchResult::Solution(i));
+            }
+        }
+
+        // 3. OptionSets
+        for (i, os) in self.global_optionsets.iter().enumerate() {
+            if os.name.to_lowercase().contains(&query)
+                || os.get_display_name().to_lowercase().contains(&query)
+            {
+                results.push(SearchResult::OptionSet(i));
+            }
+        }
+
+        self.global_search_results = results;
+        self.global_search_index = 0;
+        self.view = View::GlobalSearch;
+    }
+
+    /// Enter the selected search result
+    pub async fn enter_search_result(&mut self) {
+        let Some(result) = self.global_search_results.get(self.global_search_index).cloned() else { return; };
+        match result {
+            SearchResult::Entity(idx) => {
+                let logical_name = self.entities[idx].logical_name.clone();
+                self.load_entity_detail(&logical_name).await;
+                self.selected_entity = Some(self.entities[idx].clone());
+                self.view = View::EntityDetail;
+            }
+            SearchResult::Solution(idx) => {
+                let solution_id = self.solutions[idx].solution_id.clone();
+                self.load_solution_detail(&solution_id).await;
+                self.selected_solution = Some(self.solutions[idx].clone());
+                self.view = View::SolutionDetail;
+            }
+            SearchResult::OptionSet(idx) => {
+                self.optionset_index = idx;
+                // We need to find the filtered index for the OptionSet view
+                if let Some(filtered_idx) = self.filtered_optionsets.iter().position(|&i| i == idx) {
+                    self.optionset_index = filtered_idx;
+                } else {
+                    // Reset filter if not found
+                    self.search_query.clear();
+                    self.filter_optionsets();
+                    self.optionset_index = idx;
+                }
+                self.view = View::OptionSets;
+            }
+        }
     }
 
     /// Go back from detail view

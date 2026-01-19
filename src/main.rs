@@ -200,6 +200,12 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             return;
         }
+        KeyCode::Char('g') => {
+            app.input_mode = InputMode::Search;
+            app.search_query.clear();
+            app.view = View::GlobalSearch;
+            return;
+        }
         _ => {}
     }
 
@@ -337,6 +343,12 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_solution_detail(&solution_id).await;
                 }
             }
+            View::OptionSets => {
+                // No action for now
+            }
+            View::GlobalSearch => {
+                app.enter_search_result().await;
+            }
             View::SolutionDetail => {
                 app.jump_to_component().await;
             }
@@ -369,6 +381,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
+                View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
         }
@@ -383,6 +396,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
+                View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
         }

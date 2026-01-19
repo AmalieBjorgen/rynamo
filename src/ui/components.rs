@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::app::{App, AppState, EntityTab, QueryMode, UserTab, View};
+use super::app::{App, AppState, EntityTab, QueryMode, SearchResult, UserTab, View};
 use super::input::InputMode;
 use crate::models::{ComponentType, RoleSource, SolutionComponent};
 
@@ -35,12 +35,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]", "Search [G]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail | View::RecordDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
         View::OptionSets => 3,
+        View::GlobalSearch => 4,
     };
 
     let tabs = Tabs::new(titles)
@@ -82,6 +83,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::UserDetail => render_user_detail(frame, app, area),
             View::RecordDetail => render_record_detail(frame, app, area),
             View::OptionSets => render_optionset_browser(frame, app, area),
+            View::GlobalSearch => render_global_search(frame, app, area),
         },
     }
 }
@@ -1260,9 +1262,60 @@ fn render_optionset_browser(frame: &mut Frame, app: &mut App, area: Rect) {
                 .block(detail_block);
             frame.render_widget(msg, chunks[1]);
         }
-    } else {
-        let msg = Paragraph::new("\n  Select a choice set to view its values.")
-            .block(detail_block);
-        frame.render_widget(msg, chunks[1]);
     }
+}
+
+/// Render global search results
+fn render_global_search(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = app.global_search_results
+        .iter()
+        .map(|result| {
+            match result {
+                SearchResult::Entity(idx) => {
+                    let entity = &app.entities[*idx];
+                    ListItem::new(Line::from(vec![
+                        Span::styled(" [Entity]   ", Style::default().fg(Color::Cyan)),
+                        Span::styled(entity.get_display_name(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!(" ({})", entity.logical_name), Style::default().fg(Color::DarkGray)),
+                    ]))
+                }
+                SearchResult::Solution(idx) => {
+                    let solution = &app.solutions[*idx];
+                    ListItem::new(Line::from(vec![
+                        Span::styled(" [Solution] ", Style::default().fg(Color::Yellow)),
+                        Span::styled(solution.get_display_name(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!(" ({})", solution.unique_name), Style::default().fg(Color::DarkGray)),
+                    ]))
+                }
+                SearchResult::OptionSet(idx) => {
+                    let os = &app.global_optionsets[*idx];
+                    ListItem::new(Line::from(vec![
+                        Span::styled(" [Choice]   ", Style::default().fg(Color::Green)),
+                        Span::styled(os.get_display_name(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!(" ({})", os.name), Style::default().fg(Color::DarkGray)),
+                    ]))
+                }
+            }
+        })
+        .collect();
+
+    let title = format!(
+        " Global Search: '{}' ({}) - Enter: Go To / Esc: Back ",
+        app.search_query,
+        app.global_search_results.len()
+    );
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    if !app.global_search_results.is_empty() {
+        list_state.select(Some(app.global_search_index));
+    }
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
