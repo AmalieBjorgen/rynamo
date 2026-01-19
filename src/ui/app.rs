@@ -7,6 +7,7 @@ use crate::models::{
     ComponentType, SystemUser, Team, OptionSetMetadata,
 };
 use super::input::{InputMode, KeyBindings};
+use anyhow::Context;
 use std::sync::Arc;
 
 /// Current view in the application
@@ -22,6 +23,7 @@ pub enum View {
     RecordDetail,
     OptionSets,
     GlobalSearch,
+    Environments,
 }
 
 /// Application state for the TUI
@@ -130,6 +132,10 @@ pub struct App {
     // Global Search state
     pub global_search_results: Vec<SearchResult>,
     pub global_search_index: usize,
+
+    // Environment state
+    pub config: crate::config::Config,
+    pub environment_index: usize,
 
     // User list state
     pub users: Vec<SystemUser>,
@@ -294,6 +300,8 @@ impl App {
             selected_optionset: None,
             global_search_results: Vec::new(),
             global_search_index: 0,
+            config: crate::config::Config::default(),
+            environment_index: 0,
             users: Vec::new(),
             filtered_users: Vec::new(),
             user_index: 0,
@@ -659,6 +667,11 @@ impl App {
                     self.global_search_index -= 1;
                 }
             }
+            View::Environments => {
+                if self.environment_index > 0 {
+                    self.environment_index -= 1;
+                }
+            }
         }
     }
 
@@ -778,6 +791,13 @@ impl App {
                     && self.global_search_index < self.global_search_results.len() - 1
                 {
                     self.global_search_index += 1;
+                }
+            }
+            View::Environments => {
+                if !self.config.environments.is_empty()
+                    && self.environment_index < self.config.environments.len() - 1
+                {
+                    self.environment_index += 1;
                 }
             }
         }
@@ -1352,5 +1372,45 @@ impl App {
     /// Clear the feedback message
     pub fn clear_message(&mut self) {
         self.message = None;
+    }
+
+    /// Switch to a different environment
+    pub async fn switch_environment(&mut self, url: &str) -> anyhow::Result<()> {
+        self.state = AppState::Loading;
+        self.error = None;
+        self.message = Some(format!("Connecting to {}...", url));
+
+        let authenticator = std::sync::Arc::new(
+            crate::auth::AzureAuthenticator::new(url)
+                .await
+                .context("Failed to create Azure authenticator")?,
+        );
+
+        if let Err(e) = authenticator.test_connection().await {
+            self.error = Some(format!("Connection failed: {}", e));
+            self.state = AppState::Error;
+            return Err(anyhow::anyhow!("Connection failed: {}", e));
+        }
+
+        self.client = std::sync::Arc::new(crate::api::DataverseClient::new(authenticator));
+        
+        // Update config
+        self.config.current_env = Some(url.to_string());
+        let _ = self.config.save();
+
+        // Reload data
+        self.load_entities().await;
+        self.view = View::Entities;
+        self.message = Some(format!("Switched to {}", url));
+        self.state = AppState::Ready;
+        
+        Ok(())
+    }
+
+    /// Add a new environment
+    pub async fn add_new_environment(&mut self, url: String) -> anyhow::Result<()> {
+        self.config.add_environment(url.clone());
+        let _ = self.config.save();
+        self.switch_environment(&url).await
     }
 }

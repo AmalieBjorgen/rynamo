@@ -35,13 +35,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]", "Search [G]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]", "Search [G]", "Env [E]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail | View::RecordDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
         View::OptionSets => 3,
         View::GlobalSearch => 4,
+        View::Environments => 5,
     };
 
     let tabs = Tabs::new(titles)
@@ -84,6 +85,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::RecordDetail => render_record_detail(frame, app, area),
             View::OptionSets => render_optionset_browser(frame, app, area),
             View::GlobalSearch => render_global_search(frame, app, area),
+            View::Environments => render_environment_switcher(frame, app, area),
         },
     }
 }
@@ -1316,6 +1318,43 @@ fn render_global_search(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut list_state = ListState::default();
     if !app.global_search_results.is_empty() {
         list_state.select(Some(app.global_search_index));
+    }
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render environment switcher
+fn render_environment_switcher(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = app.config.environments
+        .iter()
+        .map(|url| {
+            let is_current = app.config.current_env.as_ref().map_or(false, |curr| curr == url);
+            let prefix = if is_current { "● " } else { "○ " };
+            let style = if is_current {
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(url, style),
+            ]))
+        })
+        .collect();
+
+    let title = " Switch Environment - Enter: Select / Esc: Back ";
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    if !app.config.environments.is_empty() {
+        list_state.select(Some(app.environment_index));
     }
     frame.render_stateful_widget(list, area, &mut list_state);
 }

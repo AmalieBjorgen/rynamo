@@ -11,6 +11,7 @@ mod auth;
 mod models;
 mod ui;
 mod export;
+mod config;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -53,6 +54,13 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    // Load configuration
+    let mut config = config::Config::load().unwrap_or_default();
+    if !config.environments.contains(&args.env) {
+        config.add_environment(args.env.clone());
+        let _ = config.save();
+    }
+
     // Set up authentication
     let authenticator = Arc::new(
         AzureAuthenticator::new(&args.env)
@@ -87,6 +95,7 @@ async fn main() -> Result<()> {
 
     // Create app and run
     let mut app = App::new(client, key_bindings);
+    app.config = config;
     let result = run_app(&mut terminal, &mut app).await;
 
     // Restore terminal
@@ -204,6 +213,10 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             app.input_mode = InputMode::Search;
             app.search_query.clear();
             app.view = View::GlobalSearch;
+            return;
+        }
+        KeyCode::Char('E') => {
+            app.view = View::Environments;
             return;
         }
         _ => {}
@@ -348,6 +361,11 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             View::GlobalSearch => {
                 app.enter_search_result().await;
+            }
+            View::Environments => {
+                if let Some(url) = app.config.environments.get(app.environment_index).cloned() {
+                    let _ = app.switch_environment(&url).await;
+                }
             }
             View::SolutionDetail => {
                 app.jump_to_component().await;
