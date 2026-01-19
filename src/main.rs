@@ -140,19 +140,14 @@ async fn run_app(
 
 /// Handle input in normal mode
 async fn handle_normal_mode(app: &mut App, key: KeyCode) {
+    use crate::ui::EntityTab;
+    
     // Global shortcuts
     match key {
         KeyCode::Char('q') => {
             // Only quit from main views, go back from detail views
             match app.view {
                 View::EntityDetail | View::SolutionDetail | View::UserDetail => app.go_back(),
-                View::Query => {
-                    if app.query_editing {
-                        // q in editing mode just adds character
-                    } else {
-                        app.view = View::Entities;
-                    }
-                }
                 _ => app.should_quit = true,
             }
             return;
@@ -190,40 +185,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             return;
         }
-        KeyCode::Char('4') => {
-            app.view = View::Query;
-            return;
-        }
-        KeyCode::Char('Q') => {
-            // Jump to Query with selected entity
-            if app.view == View::Entities {
-                app.set_query_entity_from_selection();
-            }
-            app.view = View::Query;
-            return;
-        }
         _ => {}
     }
 
     // Navigation
     if app.key_bindings.is_up(key) {
-        match app.view {
-            View::Query if !app.query_editing => {
-                app.query_field = app.query_field.prev();
-            }
-            View::Query if app.query_editing => {}
-            _ => app.navigate_up(),
-        }
+        app.navigate_up();
         return;
     }
     if app.key_bindings.is_down(key) {
-        match app.view {
-            View::Query if !app.query_editing => {
-                app.query_field = app.query_field.next();
-            }
-            View::Query if app.query_editing => {}
-            _ => app.navigate_down(),
-        }
+        app.navigate_down();
         return;
     }
     if app.key_bindings.is_left(key) {
@@ -235,47 +206,81 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
         return;
     }
 
-    // Query view specific keys
-    if app.view == View::Query {
-        if app.query_editing {
-            // Editing mode
-            match key {
-                KeyCode::Enter => {
-                    app.apply_query_input();
-                    app.query_editing = false;
+    // Query tab specific keys
+    if app.view == View::EntityDetail && app.entity_tab == EntityTab::Query {
+        match key {
+            KeyCode::Enter => {
+                match app.query_mode {
+                    crate::ui::QueryMode::Columns => {
+                        // Start adding filter for selected column
+                        app.query_filter_attr = Some(app.query_column_index);
+                        app.query_mode = crate::ui::QueryMode::Filter;
+                    }
+                    crate::ui::QueryMode::Filter => {
+                        // Add current filter
+                        app.add_filter();
+                    }
+                    _ => {
+                        // Execute query in other modes
+                        app.execute_guided_query().await;
+                    }
                 }
-                KeyCode::Esc => {
-                    app.query_editing = false;
-                }
-                KeyCode::Backspace => {
-                    app.query_input.pop();
-                }
-                KeyCode::Char(c) => {
-                    app.query_input.push(c);
-                }
-                _ => {}
             }
-        } else {
-            // Normal mode
-            match key {
-                KeyCode::Enter => {
-                    app.load_query_field_to_input();
-                    app.query_editing = true;
+            KeyCode::Char('d') => {
+                if app.query_mode == crate::ui::QueryMode::Filter {
+                    app.remove_filter();
                 }
-                KeyCode::F(5) => {
-                    app.execute_query().await;
-                }
-                KeyCode::Char('c') => {
-                    app.clear_query();
-                }
-                KeyCode::Up => {
-                    app.query_result_up();
-                }
-                KeyCode::Down => {
-                    app.query_result_down();
-                }
-                _ => {}
             }
+            KeyCode::Char('o') => {
+                if app.query_mode == crate::ui::QueryMode::Filter {
+                    app.query_filter_op = app.query_filter_op.next();
+                }
+            }
+            KeyCode::Char('O') => {
+                if app.query_mode == crate::ui::QueryMode::Filter {
+                    app.query_filter_op = app.query_filter_op.prev();
+                }
+            }
+            KeyCode::Backspace => {
+                if app.query_mode == crate::ui::QueryMode::Filter {
+                    app.query_filter_value.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if app.query_mode == crate::ui::QueryMode::Filter && app.query_filter_attr.is_some() {
+                    app.query_filter_value.push(c);
+                } else {
+                    // Fallback to original handlers for things like ' ' (space)
+                    match c {
+                        ' ' => app.toggle_query_column(),
+                        'a' => app.select_all_columns(),
+                        'c' => app.clear_query(),
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::F(5) => {
+                // Execute query
+                app.execute_guided_query().await;
+            }
+            KeyCode::Tab => {
+                // Switch query mode
+                app.query_mode = match app.query_mode {
+                    crate::ui::QueryMode::Columns => crate::ui::QueryMode::Filter,
+                    crate::ui::QueryMode::Filter => crate::ui::QueryMode::Options,
+                    crate::ui::QueryMode::Options => crate::ui::QueryMode::Results,
+                    crate::ui::QueryMode::OrderBy => crate::ui::QueryMode::Results,
+                    crate::ui::QueryMode::Results => crate::ui::QueryMode::Columns,
+                };
+            }
+            KeyCode::Esc => {
+                if app.query_mode == crate::ui::QueryMode::Filter && app.query_filter_attr.is_some() {
+                    app.query_filter_attr = None;
+                } else {
+                    app.go_back();
+                }
+            }
+            _ => {}
         }
         return;
     }
@@ -345,3 +350,4 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
         _ => {}
     }
 }
+

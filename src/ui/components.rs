@@ -8,9 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use super::app::{App, AppState, EntityTab, UserTab, View};
+use super::app::{App, AppState, EntityTab, QueryMode, UserTab, View};
 use super::input::InputMode;
-use crate::models::{QueryField, RoleSource};
+use crate::models::RoleSource;
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -35,12 +35,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Query [4]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
-        View::Query => 3,
     };
 
     let tabs = Tabs::new(titles)
@@ -80,7 +79,6 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::SolutionDetail => render_solution_detail(frame, app, area),
             View::Users => render_user_list(frame, app, area),
             View::UserDetail => render_user_detail(frame, app, area),
-            View::Query => render_query_view(frame, app, area),
         },
     }
 }
@@ -172,11 +170,13 @@ fn render_entity_detail(frame: &mut Frame, app: &mut App, area: Rect) {
             app.one_to_many.len() + app.many_to_one.len() + app.many_to_many.len()
         ),
         "Metadata".to_string(),
+        "Query".to_string(),
     ];
     let selected_tab = match app.entity_tab {
         EntityTab::Attributes => 0,
         EntityTab::Relationships => 1,
         EntityTab::Metadata => 2,
+        EntityTab::Query => 3,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -191,6 +191,7 @@ fn render_entity_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         EntityTab::Attributes => render_attributes(frame, app, chunks[2]),
         EntityTab::Relationships => render_relationships(frame, app, chunks[2]),
         EntityTab::Metadata => render_entity_metadata(frame, app, chunks[2]),
+        EntityTab::Query => render_query_tab(frame, app, chunks[2]),
     }
 }
 
@@ -780,113 +781,185 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Render the query builder view
-fn render_query_view(frame: &mut Frame, app: &mut App, area: Rect) {
+/// Render Query tab in entity detail - guided query builder
+fn render_query_tab(frame: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
-        .direction(Direction::Vertical)
+        .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(11), // Query input fields
-            Constraint::Min(0),     // Results
+            Constraint::Percentage(40), // Left panel - columns/filters
+            Constraint::Percentage(60), // Right panel - results
         ])
         .split(area);
 
-    render_query_form(frame, app, chunks[0]);
+    render_query_builder(frame, app, chunks[0]);
     render_query_results(frame, app, chunks[1]);
 }
 
-/// Render the query input form
-fn render_query_form(frame: &mut Frame, app: &App, area: Rect) {
-    let fields = [
-        QueryField::Entity,
-        QueryField::Select,
-        QueryField::Filter,
-        QueryField::OrderBy,
-        QueryField::Top,
-    ];
+/// Render the query builder panels (columns, filters)
+fn render_query_builder(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Mode tabs
+            Constraint::Min(0),    // Content
+            Constraint::Length(3), // Help
+        ])
+        .split(area);
 
-    let mut lines: Vec<Line> = Vec::new();
+    // Mode tabs
+    let mode_titles = vec!["Columns", "Filters", "Options", "Results"];
+    let selected_mode = match app.query_mode {
+        QueryMode::Columns => 0,
+        QueryMode::Filter => 1,
+        QueryMode::OrderBy | QueryMode::Options => 2,
+        QueryMode::Results => 3,
+    };
 
-    for field in &fields {
-        let is_selected = app.query_field == *field;
-        let is_editing = is_selected && app.query_editing;
+    let mode_tabs = Tabs::new(mode_titles)
+        .block(Block::default().borders(Borders::ALL))
+        .select(selected_mode)
+        .style(Style::default().fg(Color::White))
+        .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    frame.render_widget(mode_tabs, chunks[0]);
 
-        let label_style = if is_selected {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Yellow)
-        };
-
-        let value = if is_editing {
-            format!("{}_", app.query_input)
-        } else {
-            match field {
-                QueryField::Entity => app.query.entity_name.clone(),
-                QueryField::Select => {
-                    if app.query.select.is_empty() {
-                        "(all)".to_string()
-                    } else {
-                        app.query.select.join(", ")
-                    }
-                }
-                QueryField::Filter => {
-                    if app.query.filter.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        app.query.filter.clone()
-                    }
-                }
-                QueryField::OrderBy => {
-                    if app.query.order_by.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        app.query.order_by.clone()
-                    }
-                }
-                QueryField::Top => app.query.top.map(|n| n.to_string()).unwrap_or("(all)".to_string()),
-            }
-        };
-
-        let value_style = if is_editing {
-            Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 80))
-        } else if is_selected {
-            Style::default().fg(Color::White)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        let prefix = if is_selected { "▶ " } else { "  " };
-
-        lines.push(Line::from(vec![
-            Span::raw(prefix),
-            Span::styled(format!("{:<10}", field.label()), label_style),
-            Span::styled(value, value_style),
-        ]));
+    // Content based on mode
+    match app.query_mode {
+        QueryMode::Columns => render_column_selector(frame, app, chunks[1]),
+        QueryMode::Filter => render_filter_builder(frame, app, chunks[1]),
+        QueryMode::OrderBy | QueryMode::Options => render_query_options(frame, app, chunks[1]),
+        QueryMode::Results => {
+            // In results mode, show selected columns as a reference on the left
+            render_column_selector(frame, app, chunks[1]);
+        }
     }
 
-    // Add help text
-    lines.push(Line::from(""));
-    let help = if app.query_editing {
-        "Enter: Apply │ Esc: Cancel"
-    } else {
-        "↑↓: Select field │ Enter: Edit │ F5: Run Query │ c: Clear │ q: Back"
+    // Help text
+    let help = match app.query_mode {
+        QueryMode::Columns => "Tab: Next │ Enter: Filter by │ Space: Toggle │ a: All │ c: Clear │ F5: Run",
+        QueryMode::Filter => "Tab: Next │ Enter: Add │ d: Delete │ o/O: Op │ Backspace: Pop │ F5: Run",
+        QueryMode::Options | QueryMode::OrderBy => "Tab: Next │ Enter: Edit │ F5: Run",
+        QueryMode::Results => "Tab: Next │ ↑/↓: Scroll │ Esc: Back │ F5: Run again",
     };
-    lines.push(Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))));
+    let help_para = Paragraph::new(help)
+        .style(Style::default().fg(Color::DarkGray))
+        .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(help_para, chunks[2]);
+}
 
-    // Show generated URL
-    lines.push(Line::from(""));
-    let url = app.query.build_url();
-    lines.push(Line::from(vec![
-        Span::styled("URL: ", Style::default().fg(Color::Yellow)),
-        Span::styled(url, Style::default().fg(Color::Blue)),
-    ]));
+/// Render column selector list
+fn render_column_selector(frame: &mut Frame, app: &App, area: Rect) {
+    let selected_count = app.query_selected_columns.iter().filter(|&&s| s).count();
 
-    let paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Query Builder ")
-        );
+    let items: Vec<ListItem> = app.entity_attributes
+        .iter()
+        .enumerate()
+        .map(|(i, attr)| {
+            let is_selected = app.query_selected_columns.get(i).copied().unwrap_or(false);
+            let checkbox = if is_selected { "[✓]" } else { "[ ]" };
+            let content = format!("{} {} ({})", checkbox, attr.logical_name, attr.get_type_name());
+            
+            let style = if is_selected {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+            
+            ListItem::new(content).style(style)
+        })
+        .collect();
 
+    let title = format!(" Select Columns ({} selected) ", selected_count);
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.query_column_index));
+
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render filter builder
+fn render_filter_builder(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // Applied filters
+            Constraint::Length(5), // New filter input
+        ])
+        .split(area);
+
+    // Applied filters list
+    let filter_items: Vec<ListItem> = app.query_filters
+        .iter()
+        .map(|f| {
+            let content = format!("{} {} {}", f.attribute_name, f.operator.label(), f.value);
+            ListItem::new(content).style(Style::default().fg(Color::Yellow))
+        })
+        .collect();
+
+    let filter_title = format!(" Filters ({}) ", app.query_filters.len());
+    let filter_list = List::new(filter_items)
+        .block(Block::default().borders(Borders::ALL).title(filter_title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut filter_state = ListState::default();
+    if !app.query_filters.is_empty() {
+        filter_state.select(Some(app.query_filter_index));
+    }
+    frame.render_stateful_widget(filter_list, chunks[0], &mut filter_state);
+
+    // New filter input
+    let new_filter_text = if let Some(attr_idx) = app.query_filter_attr {
+        let attr_name = app.entity_attributes.get(attr_idx)
+            .map(|a| a.logical_name.as_str())
+            .unwrap_or("?");
+        format!("{} {} {}", attr_name, app.query_filter_op.label(), app.query_filter_value)
+    } else {
+        "Press Enter on a column to add filter".to_string()
+    };
+    
+    let new_filter = Paragraph::new(new_filter_text)
+        .style(Style::default().fg(Color::Cyan))
+        .block(Block::default().borders(Borders::ALL).title(" New Filter "));
+    frame.render_widget(new_filter, chunks[1]);
+}
+
+/// Render query options (order by, top)
+fn render_query_options(frame: &mut Frame, app: &App, area: Rect) {
+    let order_by_text = match app.query_order_by {
+        Some(idx) => {
+            let name = app.entity_attributes.get(idx)
+                .map(|a| a.logical_name.as_str())
+                .unwrap_or("?");
+            let dir = if app.query_order_desc { " DESC" } else { " ASC" };
+            format!("{}{}", name, dir)
+        }
+        None => "(none)".to_string(),
+    };
+
+    let top_text = app.query_top
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "(all)".to_string());
+
+    let options = vec![
+        format!("Order By:  {}", order_by_text),
+        format!("Top:       {}", top_text),
+    ];
+
+    let text: Vec<Line> = options.into_iter().map(Line::from).collect();
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title(" Options "));
     frame.render_widget(paragraph, area);
 }
 
@@ -904,7 +977,7 @@ fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // Check if we have results
     if app.query_result.columns.is_empty() {
-        let paragraph = Paragraph::new("No results. Press F5 to run query.")
+        let paragraph = Paragraph::new("Press F5 to run query")
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::ALL).title(" Results "));
         frame.render_widget(paragraph, area);
@@ -929,10 +1002,16 @@ fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let title = format!(
-        " Results ({} rows{}) ",
+        " Results ({} rows) {} ",
         app.query_result.rows.len(),
-        app.query_result.count.map(|c| format!(" of {}", c)).unwrap_or_default()
+        if app.query_mode == QueryMode::Results { "[ACTIVE]" } else { "" }
     );
+
+    let border_style = if app.query_mode == QueryMode::Results {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
 
     let table = Table::new(rows, widths)
         .header(header)
@@ -940,7 +1019,7 @@ fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .title_bottom(" ↑↓: Navigate rows "),
+                .border_style(border_style),
         )
         .row_highlight_style(
             Style::default()

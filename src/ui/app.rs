@@ -2,7 +2,7 @@
 
 use crate::api::DataverseClient;
 use crate::models::{
-    AttributeMetadata, EntityMetadata, QueryDefinition, QueryField, QueryResult,
+    AttributeMetadata, EntityMetadata, QueryResult,
     RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SystemUser, Team,
 };
 use super::input::{InputMode, KeyBindings};
@@ -18,7 +18,6 @@ pub enum View {
     SolutionDetail,
     Users,
     UserDetail,
-    Query,
 }
 
 /// Application state for the TUI
@@ -37,6 +36,18 @@ pub enum EntityTab {
     Attributes,
     Relationships,
     Metadata,
+    Query,
+}
+
+/// Query builder mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueryMode {
+    #[default]
+    Columns,    // Select columns to include
+    Filter,     // Build filter conditions
+    OrderBy,    // Select order by column
+    Options,    // Top, skip options
+    Results,    // View results
 }
 
 /// Detail tab for user view
@@ -108,16 +119,109 @@ pub struct App {
     pub user_role_index: usize,
     pub user_team_index: usize,
 
-    // Query builder state
-    pub query: QueryDefinition,
-    pub query_field: QueryField,
-    pub query_input: String,
+    // Guided Query builder state (integrated in Entity Detail)
+    pub query_mode: QueryMode,
+    pub query_selected_columns: Vec<bool>,  // Parallel to entity_attributes - which are selected
+    pub query_column_index: usize,          // Cursor in column list
+    pub query_order_by: Option<usize>,      // Index of attribute to order by (None = no order)
+    pub query_order_desc: bool,             // Order descending
+    pub query_top: Option<usize>,           // $top value
+    pub query_filter_attr: Option<usize>,   // Attribute index for filter
+    pub query_filter_op: FilterOp,          // Filter operator
+    pub query_filter_value: String,         // Filter value input
+    pub query_filters: Vec<FilterCondition>, // Applied filters
+    pub query_filter_index: usize,          // Cursor in filter list
     pub query_result: QueryResult,
     pub query_result_index: usize,
-    pub query_editing: bool,
+    pub query_editing: bool,                // Editing filter value
 
     /// Should quit
     pub should_quit: bool,
+}
+
+/// Filter operator for guided filter building
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterOp {
+    #[default]
+    Equals,
+    NotEquals,
+    Contains,
+    StartsWith,
+    EndsWith,
+    GreaterThan,
+    LessThan,
+    IsNull,
+    IsNotNull,
+}
+
+impl FilterOp {
+    pub fn to_odata(&self, attr: &str, value: &str) -> String {
+        match self {
+            Self::Equals => format!("{} eq '{}'", attr, value),
+            Self::NotEquals => format!("{} ne '{}'", attr, value),
+            Self::Contains => format!("contains({}, '{}')", attr, value),
+            Self::StartsWith => format!("startswith({}, '{}')", attr, value),
+            Self::EndsWith => format!("endswith({}, '{}')", attr, value),
+            Self::GreaterThan => format!("{} gt {}", attr, value),
+            Self::LessThan => format!("{} lt {}", attr, value),
+            Self::IsNull => format!("{} eq null", attr),
+            Self::IsNotNull => format!("{} ne null", attr),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Equals => "equals",
+            Self::NotEquals => "not equals",
+            Self::Contains => "contains",
+            Self::StartsWith => "starts with",
+            Self::EndsWith => "ends with",
+            Self::GreaterThan => ">",
+            Self::LessThan => "<",
+            Self::IsNull => "is null",
+            Self::IsNotNull => "is not null",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Equals => Self::NotEquals,
+            Self::NotEquals => Self::Contains,
+            Self::Contains => Self::StartsWith,
+            Self::StartsWith => Self::EndsWith,
+            Self::EndsWith => Self::GreaterThan,
+            Self::GreaterThan => Self::LessThan,
+            Self::LessThan => Self::IsNull,
+            Self::IsNull => Self::IsNotNull,
+            Self::IsNotNull => Self::Equals,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Equals => Self::IsNotNull,
+            Self::NotEquals => Self::Equals,
+            Self::Contains => Self::NotEquals,
+            Self::StartsWith => Self::Contains,
+            Self::EndsWith => Self::StartsWith,
+            Self::GreaterThan => Self::EndsWith,
+            Self::LessThan => Self::GreaterThan,
+            Self::IsNull => Self::LessThan,
+            Self::IsNotNull => Self::IsNull,
+        }
+    }
+
+    pub fn needs_value(&self) -> bool {
+        !matches!(self, Self::IsNull | Self::IsNotNull)
+    }
+}
+
+/// A single filter condition
+#[derive(Debug, Clone)]
+pub struct FilterCondition {
+    pub attribute_name: String,
+    pub operator: FilterOp,
+    pub value: String,
 }
 
 impl App {
@@ -157,9 +261,17 @@ impl App {
             user_all_roles: Vec::new(),
             user_role_index: 0,
             user_team_index: 0,
-            query: QueryDefinition::default(),
-            query_field: QueryField::Entity,
-            query_input: String::new(),
+            query_mode: QueryMode::Columns,
+            query_selected_columns: Vec::new(),
+            query_column_index: 0,
+            query_order_by: None,
+            query_order_desc: false,
+            query_top: Some(50), // Default top 50
+            query_filter_attr: None,
+            query_filter_op: FilterOp::Equals,
+            query_filter_value: String::new(),
+            query_filters: Vec::new(),
+            query_filter_index: 0,
             query_result: QueryResult::default(),
             query_result_index: 0,
             query_editing: false,
@@ -217,6 +329,18 @@ impl App {
         self.attribute_index = 0;
         self.relationship_index = 0;
         self.entity_tab = EntityTab::Attributes;
+        
+        // Reset query state for new entity
+        self.query_selected_columns = vec![false; self.entity_attributes.len()];
+        self.query_column_index = 0;
+        self.query_order_by = None;
+        self.query_order_desc = false;
+        self.query_filters.clear();
+        self.query_filter_index = 0;
+        self.query_result = QueryResult::default();
+        self.query_result_index = 0;
+        self.query_mode = QueryMode::Columns;
+        
         self.state = AppState::Ready;
     }
 
@@ -424,6 +548,26 @@ impl App {
                     }
                 }
                 EntityTab::Metadata => {}
+                EntityTab::Query => {
+                    match self.query_mode {
+                        QueryMode::Columns => {
+                            if self.query_column_index > 0 {
+                                self.query_column_index -= 1;
+                            }
+                        }
+                        QueryMode::Filter => {
+                            if self.query_filter_index > 0 {
+                                self.query_filter_index -= 1;
+                            }
+                        }
+                        QueryMode::Results => {
+                            if self.query_result_index > 0 {
+                                self.query_result_index -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             },
             View::Solutions => {
                 if self.solution_index > 0 {
@@ -448,7 +592,7 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail | View::Query => {}
+            View::SolutionDetail => {}
         }
     }
 
@@ -477,6 +621,32 @@ impl App {
                     }
                 }
                 EntityTab::Metadata => {}
+                EntityTab::Query => {
+                    match self.query_mode {
+                        QueryMode::Columns => {
+                            if !self.filtered_attributes.is_empty()
+                                && self.query_column_index < self.filtered_attributes.len() - 1
+                            {
+                                self.query_column_index += 1;
+                            }
+                        }
+                        QueryMode::Filter => {
+                            if !self.query_filters.is_empty()
+                                && self.query_filter_index < self.query_filters.len() - 1
+                            {
+                                self.query_filter_index += 1;
+                            }
+                        }
+                        QueryMode::Results => {
+                            if !self.query_result.rows.is_empty()
+                                && self.query_result_index < self.query_result.rows.len() - 1
+                            {
+                                self.query_result_index += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             },
             View::Solutions => {
                 if !self.filtered_solutions.is_empty()
@@ -516,7 +686,7 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail | View::Query => {}
+            View::SolutionDetail => {}
         }
     }
 
@@ -527,7 +697,8 @@ impl App {
                 self.entity_tab = match self.entity_tab {
                     EntityTab::Attributes => EntityTab::Relationships,
                     EntityTab::Relationships => EntityTab::Metadata,
-                    EntityTab::Metadata => EntityTab::Attributes,
+                    EntityTab::Metadata => EntityTab::Query,
+                    EntityTab::Query => EntityTab::Attributes,
                 };
             }
             View::UserDetail => {
@@ -549,9 +720,10 @@ impl App {
         match self.view {
             View::EntityDetail => {
                 self.entity_tab = match self.entity_tab {
-                    EntityTab::Attributes => EntityTab::Metadata,
+                    EntityTab::Attributes => EntityTab::Query,
                     EntityTab::Relationships => EntityTab::Attributes,
                     EntityTab::Metadata => EntityTab::Relationships,
+                    EntityTab::Query => EntityTab::Metadata,
                 };
             }
             View::UserDetail => {
@@ -626,23 +798,69 @@ impl App {
         }
     }
 
-    /// Execute the current query
-    pub async fn execute_query(&mut self) {
-        if self.query.entity_set_name.is_empty() {
-            self.query_result.error = Some("Please select an entity first".to_string());
+    /// Build and execute query from guided selections
+    pub async fn execute_guided_query(&mut self) {
+        let Some(entity) = &self.selected_entity else {
+            self.query_result.error = Some("No entity selected".to_string());
             return;
+        };
+
+        let entity_set = entity.entity_set_name.clone().unwrap_or_else(|| {
+            format!("{}s", entity.logical_name)
+        });
+
+        // Build $select from selected columns
+        let select: Vec<String> = self.query_selected_columns
+            .iter()
+            .enumerate()
+            .filter(|(_, selected)| **selected)
+            .filter_map(|(i, _)| self.entity_attributes.get(i))
+            .map(|attr| attr.logical_name.clone())
+            .collect();
+
+        // Build $filter from filter conditions
+        let filter_parts: Vec<String> = self.query_filters
+            .iter()
+            .map(|f| f.operator.to_odata(&f.attribute_name, &f.value))
+            .collect();
+
+        // Build URL
+        let mut parts: Vec<String> = Vec::new();
+
+        if !select.is_empty() {
+            parts.push(format!("$select={}", select.join(",")));
         }
+
+        if !filter_parts.is_empty() {
+            parts.push(format!("$filter={}", filter_parts.join(" and ")));
+        }
+
+        if let Some(order_idx) = self.query_order_by {
+            if let Some(attr) = self.entity_attributes.get(order_idx) {
+                let dir = if self.query_order_desc { " desc" } else { "" };
+                parts.push(format!("$orderby={}{}", attr.logical_name, dir));
+            }
+        }
+
+        if let Some(top) = self.query_top {
+            parts.push(format!("$top={}", top));
+        }
+
+        let url = if parts.is_empty() {
+            entity_set
+        } else {
+            format!("{}?{}", entity_set, parts.join("&"))
+        };
 
         self.state = AppState::Loading;
         self.error = None;
-
-        let url = self.query.build_url();
 
         match self.client.execute_query(&url).await {
             Ok(json) => {
                 self.query_result = QueryResult::from_json(&json);
                 self.query_result.raw_json = Some(serde_json::to_string_pretty(&json).unwrap_or_default());
                 self.query_result_index = 0;
+                self.query_mode = QueryMode::Results;
                 self.state = AppState::Ready;
             }
             Err(e) => {
@@ -652,68 +870,65 @@ impl App {
         }
     }
 
-    /// Set the entity for the query from current selection
-    pub fn set_query_entity_from_selection(&mut self) {
-        if let Some(entity) = self.get_selected_entity().cloned() {
-            self.query.entity_name = entity.logical_name.clone();
-            self.query.entity_set_name = entity.entity_set_name.clone().unwrap_or_else(|| {
-                // Fallback: add 's' to logical name (not always correct but a guess)
-                format!("{}s", entity.logical_name)
-            });
-            self.query_input = entity.logical_name;
+    /// Toggle column selection at current index
+    pub fn toggle_query_column(&mut self) {
+        if let Some(selected) = self.query_selected_columns.get_mut(self.query_column_index) {
+            *selected = !*selected;
         }
     }
 
-    /// Apply the current query input to the appropriate field
-    pub fn apply_query_input(&mut self) {
-        match self.query_field {
-            QueryField::Entity => {
-                // Find entity by name
-                if let Some(entity) = self.entities.iter().find(|e| {
-                    e.logical_name.to_lowercase() == self.query_input.to_lowercase()
-                }) {
-                    self.query.entity_name = entity.logical_name.clone();
-                    self.query.entity_set_name = entity.entity_set_name.clone().unwrap_or_else(|| {
-                        format!("{}s", entity.logical_name)
-                    });
-                }
-            }
-            QueryField::Select => {
-                self.query.select = self.query_input
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
-            QueryField::Filter => {
-                self.query.filter = self.query_input.clone();
-            }
-            QueryField::OrderBy => {
-                self.query.order_by = self.query_input.clone();
-            }
-            QueryField::Top => {
-                self.query.top = self.query_input.parse().ok();
+    /// Select all columns
+    pub fn select_all_columns(&mut self) {
+        for s in &mut self.query_selected_columns {
+            *s = true;
+        }
+    }
+
+    /// Clear all column selections
+    pub fn clear_column_selections(&mut self) {
+        for s in &mut self.query_selected_columns {
+            *s = false;
+        }
+    }
+
+    /// Add current filter to the list
+    pub fn add_filter(&mut self) {
+        if let Some(attr_idx) = self.query_filter_attr {
+            if let Some(attr) = self.entity_attributes.get(attr_idx) {
+                let filter = FilterCondition {
+                    attribute_name: attr.logical_name.clone(),
+                    operator: self.query_filter_op,
+                    value: self.query_filter_value.clone(),
+                };
+                self.query_filters.push(filter);
+                self.query_filter_value.clear();
+                self.query_filter_attr = None;
             }
         }
     }
 
-    /// Load the current field value into input for editing
-    pub fn load_query_field_to_input(&mut self) {
-        self.query_input = match self.query_field {
-            QueryField::Entity => self.query.entity_name.clone(),
-            QueryField::Select => self.query.select.join(", "),
-            QueryField::Filter => self.query.filter.clone(),
-            QueryField::OrderBy => self.query.order_by.clone(),
-            QueryField::Top => self.query.top.map(|n| n.to_string()).unwrap_or_default(),
-        };
+    /// Remove filter at current index
+    pub fn remove_filter(&mut self) {
+        if !self.query_filters.is_empty() && self.query_filter_index < self.query_filters.len() {
+            self.query_filters.remove(self.query_filter_index);
+            if self.query_filter_index > 0 {
+                self.query_filter_index -= 1;
+            }
+        }
     }
 
-    /// Clear the query and results
+    /// Clear query and results
     pub fn clear_query(&mut self) {
-        self.query.clear();
-        self.query_input.clear();
+        for s in &mut self.query_selected_columns {
+            *s = false;
+        }
+        self.query_filters.clear();
+        self.query_order_by = None;
+        self.query_order_desc = false;
+        self.query_top = Some(50);
         self.query_result = QueryResult::default();
         self.query_result_index = 0;
+        self.query_mode = QueryMode::Columns;
     }
 
     /// Navigate query results up
@@ -732,4 +947,3 @@ impl App {
         }
     }
 }
-
