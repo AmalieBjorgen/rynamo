@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::app::{App, AppState, EntityTab, QueryMode, UserTab, View};
 use super::input::InputMode;
-use crate::models::RoleSource;
+use crate::models::{RoleSource, SolutionComponent};
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -37,7 +37,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]"];
     let selected = match app.view {
-        View::Entities | View::EntityDetail => 0,
+        View::Entities | View::EntityDetail | View::RecordDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
     };
@@ -79,6 +79,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::SolutionDetail => render_solution_detail(frame, app, area),
             View::Users => render_user_list(frame, app, area),
             View::UserDetail => render_user_detail(frame, app, area),
+            View::RecordDetail => render_record_detail(frame, app, area),
         },
     }
 }
@@ -403,11 +404,60 @@ fn render_solution_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// Render solution detail (placeholder for now)
-fn render_solution_detail(frame: &mut Frame, _app: &App, area: Rect) {
-    let paragraph = Paragraph::new("Solution detail view - Coming soon!")
-        .block(Block::default().borders(Borders::ALL).title(" Solution Details "));
-    frame.render_widget(paragraph, area);
+/// Render solution detail
+fn render_solution_detail(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(solution) = &app.selected_solution else {
+        return;
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6), // Solution info
+            Constraint::Min(0),    // Components list
+        ])
+        .split(area);
+
+    // Solution Info
+    let info_items = vec![
+        format!("Unique Name:  {}", solution.unique_name),
+        format!("Friendly Name: {}", solution.get_display_name()),
+        format!("Version:       {}", solution.version.as_deref().unwrap_or("-")),
+        format!("Managed:       {}", if solution.is_managed.unwrap_or(false) { "Yes" } else { "No" }),
+    ];
+    let info = Paragraph::new(info_items.join("\n"))
+        .block(Block::default().borders(Borders::ALL).title(" Solution Information "));
+    frame.render_widget(info, chunks[0]);
+
+    // Components List
+    let items: Vec<ListItem> = app.solution_components
+        .iter()
+        .map(|comp: &SolutionComponent| {
+            let type_name = comp.get_component_type().display_name();
+            let object_id = comp.object_id.as_deref().unwrap_or("-");
+            let content = format!("{:<25} ID: {}", type_name, object_id);
+            ListItem::new(content)
+        })
+        .collect();
+
+    let title = format!(
+        " Components ({}) - ↑↓ to Scroll / Esc to Go Back ",
+        app.solution_components.len()
+    );
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    if !app.solution_components.is_empty() {
+        list_state.select(Some(app.component_index));
+    }
+    frame.render_stateful_widget(list, chunks[1], &mut list_state);
 }
 
 /// Render user list
@@ -838,7 +888,7 @@ fn render_query_builder(frame: &mut Frame, app: &App, area: Rect) {
         QueryMode::Columns => "Tab: Next │ Enter: Filter by │ Space: Toggle │ a: All │ c: Clear │ F5: Run",
         QueryMode::Filter => "Tab: Next │ Enter: Add │ d: Delete │ o/O: Op │ Backspace: Pop │ F5: Run",
         QueryMode::Options | QueryMode::OrderBy => "Tab: Next │ Enter: Edit │ F5: Run",
-        QueryMode::Results => "Tab: Next │ ↑/↓: Scroll │ Esc: Back │ F5: Run again",
+        QueryMode::Results => "Tab: Next │ n: Next Page │ ↑/↓: Scroll │ Esc: Back │ F5: Run again",
     };
     let help_para = Paragraph::new(help)
         .style(Style::default().fg(Color::DarkGray))
@@ -1001,9 +1051,11 @@ fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
         vec![]
     };
 
+    let has_more = app.query_result.next_link.is_some();
     let title = format!(
-        " Results ({} rows) {} ",
+        " Results ({} rows){} {} ",
         app.query_result.rows.len(),
+        if has_more { " [Press 'n' for more]" } else { "" },
         if app.query_mode == QueryMode::Results { "[ACTIVE]" } else { "" }
     );
 
@@ -1032,4 +1084,50 @@ fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
     table_state.select(Some(app.query_result_index));
 
     frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// Render record detail view
+fn render_record_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let Some(row_idx) = app.selected_record_index else {
+        return;
+    };
+    let Some(row) = app.query_result.rows.get(row_idx) else {
+        return;
+    };
+
+    let items: Vec<ListItem> = app.query_result.columns
+        .iter()
+        .enumerate()
+        .map(|(col_idx, col)| {
+            let val = row.get(col_idx).cloned().unwrap_or_default();
+            let mut style = Style::default();
+            let mut content = format!("{:<30}: {}", col, val);
+            
+            if app.query_result.lookups.contains_key(&(row_idx, col_idx)) {
+                content.push_str(" [Lookup ↵]");
+                style = style.fg(Color::Cyan);
+            }
+            
+            ListItem::new(content).style(style)
+        })
+        .collect();
+
+    let title = format!(" Record Details [Row {}] ", row_idx + 1);
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_bottom(" Esc: Back │ Enter: Navigate │ ↑↓: Scroll "),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.record_detail_index));
+    frame.render_stateful_widget(list, area, &mut state);
 }

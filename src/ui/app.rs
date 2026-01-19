@@ -3,7 +3,7 @@
 use crate::api::DataverseClient;
 use crate::models::{
     AttributeMetadata, EntityMetadata, QueryResult,
-    RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SystemUser, Team,
+    RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SolutionComponent, SystemUser, Team,
 };
 use super::input::{InputMode, KeyBindings};
 use std::sync::Arc;
@@ -18,6 +18,7 @@ pub enum View {
     SolutionDetail,
     Users,
     UserDetail,
+    RecordDetail,
 }
 
 /// Application state for the TUI
@@ -104,6 +105,11 @@ pub struct App {
     pub filtered_solutions: Vec<usize>,
     pub solution_index: usize,
 
+    // Solution detail state
+    pub selected_solution: Option<Solution>,
+    pub solution_components: Vec<SolutionComponent>,
+    pub component_index: usize,
+
     // User list state
     pub users: Vec<SystemUser>,
     pub filtered_users: Vec<usize>,
@@ -134,6 +140,10 @@ pub struct App {
     pub query_result: QueryResult,
     pub query_result_index: usize,
     pub query_editing: bool,                // Editing filter value
+
+    // Record detail state
+    pub selected_record_index: Option<usize>,
+    pub record_detail_index: usize,
 
     /// Should quit
     pub should_quit: bool,
@@ -250,6 +260,9 @@ impl App {
             solutions: Vec::new(),
             filtered_solutions: Vec::new(),
             solution_index: 0,
+            selected_solution: None,
+            solution_components: Vec::new(),
+            component_index: 0,
             users: Vec::new(),
             filtered_users: Vec::new(),
             user_index: 0,
@@ -275,6 +288,8 @@ impl App {
             query_result: QueryResult::default(),
             query_result_index: 0,
             query_editing: false,
+            selected_record_index: None,
+            record_detail_index: 0,
             should_quit: false,
         }
     }
@@ -574,6 +589,11 @@ impl App {
                     self.solution_index -= 1;
                 }
             }
+            View::SolutionDetail => {
+                if self.component_index > 0 {
+                    self.component_index -= 1;
+                }
+            }
             View::Users => {
                 if self.user_index > 0 {
                     self.user_index -= 1;
@@ -592,7 +612,16 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail => {}
+            View::SolutionDetail => {
+                if self.component_index > 0 {
+                    self.component_index -= 1;
+                }
+            }
+            View::RecordDetail => {
+                if self.record_detail_index > 0 {
+                    self.record_detail_index -= 1;
+                }
+            }
         }
     }
 
@@ -686,7 +715,20 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail => {}
+            View::SolutionDetail => {
+                if !self.solution_components.is_empty()
+                    && self.component_index < self.solution_components.len() - 1
+                {
+                    self.component_index += 1;
+                }
+            }
+            View::RecordDetail => {
+                if !self.query_result.columns.is_empty()
+                    && self.record_detail_index < self.query_result.columns.len() - 1
+                {
+                    self.record_detail_index += 1;
+                }
+            }
         }
     }
 
@@ -779,6 +821,96 @@ impl App {
         }
     }
 
+    /// Enter detail view for selected solution
+    pub fn enter_solution_detail(&mut self) {
+        if let Some(solution) = self.get_selected_solution().cloned() {
+            self.selected_solution = Some(solution);
+            self.view = View::SolutionDetail;
+            self.search_query.clear();
+        }
+    }
+
+    /// Enter detail view for selected record
+    pub fn enter_record_detail(&mut self) {
+        if self.query_mode == QueryMode::Results && !self.query_result.rows.is_empty() {
+             self.selected_record_index = Some(self.query_result_index);
+             self.view = View::RecordDetail;
+             self.record_detail_index = 0;
+        }
+    }
+
+    /// Navigate to a related record from the current record detail view
+    pub async fn navigate_to_related_record(&mut self) {
+        let Some(row_idx) = self.selected_record_index else { return; };
+        let col_idx = self.record_detail_index;
+        
+        let lookup = if let Some(lookup) = self.query_result.lookups.get(&(row_idx, col_idx)) {
+            lookup.clone()
+        } else {
+            return;
+        };
+
+        // 1. Find the target entity metadata
+        let target_entity = self.entities.iter().find(|e| e.logical_name == lookup.logical_name).cloned();
+        
+        if let Some(entity) = target_entity {
+            // 2. Load entity detail (attributes, etc)
+            self.load_entity_detail(&entity.logical_name).await;
+            self.selected_entity = Some(entity);
+            
+            // 3. Fetch the specific record
+            let logical_name = self.selected_entity.as_ref().unwrap().logical_name.clone();
+            let entity_set = self.selected_entity.as_ref().unwrap().entity_set_name.clone().unwrap_or_else(|| {
+                format!("{}s", logical_name)
+            });
+            let url = format!("{}({})", entity_set, lookup.id);
+            
+            self.state = AppState::Loading;
+            self.error = None;
+            
+            match self.client.execute_query(&url).await {
+                Ok(json) => {
+                    // Wrap single object in a result format
+                    let mut wrapped = serde_json::Map::new();
+                    wrapped.insert("value".to_string(), serde_json::Value::Array(vec![(json.clone())]));
+                    let wrapped_json = serde_json::Value::Object(wrapped);
+                    
+                    self.query_result = QueryResult::from_json(&wrapped_json);
+                    self.query_result.raw_json = Some(serde_json::to_string_pretty(&json).unwrap_or_default());
+                    
+                    self.selected_record_index = Some(0);
+                    self.record_detail_index = 0;
+                    self.view = View::RecordDetail;
+                    self.state = AppState::Ready;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to fetch related record: {}", e));
+                    self.state = AppState::Ready;
+                }
+            }
+        } else {
+            self.error = Some(format!("Entity metadata not found for: {}", lookup.logical_name));
+        }
+    }
+
+    /// Load solution details (components)
+    pub async fn load_solution_detail(&mut self, solution_id: &str) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        match self.client.get_solution_components(solution_id).await {
+            Ok(components) => {
+                self.solution_components = components;
+                self.component_index = 0;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load solution components: {}", e));
+                self.state = AppState::Error;
+            }
+        }
+    }
+
     /// Go back from detail view
     pub fn go_back(&mut self) {
         match self.view {
@@ -793,6 +925,10 @@ impl App {
             View::UserDetail => {
                 self.view = View::Users;
                 self.search_query.clear();
+            }
+            View::RecordDetail => {
+                self.view = View::EntityDetail;
+                self.selected_record_index = None;
             }
             _ => {}
         }
@@ -865,6 +1001,33 @@ impl App {
             }
             Err(e) => {
                 self.query_result.error = Some(format!("Query failed: {}", e));
+                self.state = AppState::Ready;
+            }
+        }
+    }
+
+    /// Load next page of query results
+    pub async fn load_next_page(&mut self) {
+        let Some(next_link) = self.query_result.next_link.clone() else {
+            return;
+        };
+
+        self.state = AppState::Loading;
+        self.error = None;
+
+        match self.client.execute_query(&next_link).await {
+            Ok(json) => {
+                let next_result = QueryResult::from_json(&json);
+                
+                // Append new rows
+                self.query_result.rows.extend(next_result.rows);
+                self.query_result.next_link = next_result.next_link;
+                self.query_result.raw_json = Some(serde_json::to_string_pretty(&json).unwrap_or_default());
+                
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load next page: {}", e));
                 self.state = AppState::Ready;
             }
         }

@@ -220,6 +220,9 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                         // Add current filter
                         app.add_filter();
                     }
+                    crate::ui::QueryMode::Results => {
+                        app.enter_record_detail();
+                    }
                     _ => {
                         // Execute query in other modes
                         app.execute_guided_query().await;
@@ -255,6 +258,11 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                         ' ' => app.toggle_query_column(),
                         'a' => app.select_all_columns(),
                         'c' => app.clear_query(),
+                        'n' => {
+                            if app.query_mode == crate::ui::QueryMode::Results {
+                                app.load_next_page().await;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -301,6 +309,16 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.enter_user_detail();
                     app.load_user_detail(&user_id).await;
                 }
+            }
+            View::Solutions => {
+                if let Some(solution) = app.get_selected_solution().cloned() {
+                    let solution_id = solution.solution_id.clone();
+                    app.enter_solution_detail();
+                    app.load_solution_detail(&solution_id).await;
+                }
+            }
+            View::RecordDetail => {
+                app.navigate_to_related_record().await;
             }
             _ => {}
         }
