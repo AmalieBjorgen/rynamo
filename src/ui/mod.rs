@@ -4,5 +4,5 @@ pub mod components;
 mod app;
 mod input;
 
-pub use app::{App, AppState, View};
+pub use app::{App, AppState, View, UserTab};
 pub use input::{InputMode, KeyBindings};

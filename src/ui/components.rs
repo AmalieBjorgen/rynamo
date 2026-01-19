@@ -8,8 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use super::app::{App, AppState, EntityTab, View};
+use super::app::{App, AppState, EntityTab, UserTab, View};
 use super::input::InputMode;
+use crate::models::RoleSource;
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -34,10 +35,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
+        View::Users | View::UserDetail => 2,
     };
 
     let tabs = Tabs::new(titles)
@@ -75,6 +77,8 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::EntityDetail => render_entity_detail(frame, app, area),
             View::Solutions => render_solution_list(frame, app, area),
             View::SolutionDetail => render_solution_detail(frame, app, area),
+            View::Users => render_user_list(frame, app, area),
+            View::UserDetail => render_user_detail(frame, app, area),
         },
     }
 }
@@ -127,7 +131,6 @@ fn render_entity_list(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol("▶ ");
 
-    // Create list state with current selection
     let mut list_state = ListState::default();
     list_state.select(Some(app.entity_index));
 
@@ -401,6 +404,307 @@ fn render_solution_list(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_solution_detail(frame: &mut Frame, _app: &App, area: Rect) {
     let paragraph = Paragraph::new("Solution detail view - Coming soon!")
         .block(Block::default().borders(Borders::ALL).title(" Solution Details "));
+    frame.render_widget(paragraph, area);
+}
+
+/// Render user list
+fn render_user_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = app
+        .filtered_users
+        .iter()
+        .map(|&user_idx| {
+            let user = &app.users[user_idx];
+            let status = if user.is_disabled.unwrap_or(false) {
+                "⊘"
+            } else {
+                "●"
+            };
+
+            let content = format!(
+                "{} {:<35} {}",
+                status,
+                user.get_display_name(),
+                user.email.as_deref().unwrap_or("")
+            );
+
+            let style = if user.is_disabled.unwrap_or(false) {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(content).style(style)
+        })
+        .collect();
+
+    let title = format!(
+        " Users ({}/{}) ",
+        app.filtered_users.len(),
+        app.users.len()
+    );
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_bottom(" ↑↓ Navigate │ Enter: Details │ /: Search │ q: Quit "),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.user_index));
+
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render user detail view
+fn render_user_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let Some(user) = &app.selected_user else {
+        return;
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // User info
+            Constraint::Length(3), // Tabs
+            Constraint::Min(0),    // Content
+        ])
+        .split(area);
+
+    // User header
+    let header = Paragraph::new(format!(
+        "{} <{}>",
+        user.get_display_name(),
+        user.email.as_deref().unwrap_or("-")
+    ))
+    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(header, chunks[0]);
+
+    // Tabs for user details
+    let tab_titles = vec![
+        format!("Direct Roles ({})", app.user_direct_roles.len()),
+        format!("Teams ({})", app.user_teams.len()),
+        format!("All Roles ({})", app.user_all_roles.len()),
+        "Info".to_string(),
+    ];
+    let selected_tab = match app.user_tab {
+        UserTab::DirectRoles => 0,
+        UserTab::Teams => 1,
+        UserTab::AllRoles => 2,
+        UserTab::Info => 3,
+    };
+
+    let tabs = Tabs::new(tab_titles)
+        .block(Block::default().borders(Borders::ALL))
+        .select(selected_tab)
+        .style(Style::default().fg(Color::White))
+        .highlight_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+    frame.render_widget(tabs, chunks[1]);
+
+    // Tab content
+    match app.user_tab {
+        UserTab::DirectRoles => render_user_direct_roles(frame, app, chunks[2]),
+        UserTab::Teams => render_user_teams(frame, app, chunks[2]),
+        UserTab::AllRoles => render_user_all_roles(frame, app, chunks[2]),
+        UserTab::Info => render_user_info(frame, app, chunks[2]),
+    }
+}
+
+/// Render direct roles table
+fn render_user_direct_roles(frame: &mut Frame, app: &mut App, area: Rect) {
+    let header = Row::new(vec!["Role Name", "Business Unit", "Managed"])
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .user_direct_roles
+        .iter()
+        .map(|role| {
+            let managed = if role.is_managed.unwrap_or(false) { "Yes" } else { "No" };
+            Row::new(vec![
+                role.name.clone(),
+                role.get_business_unit_name(),
+                managed.to_string(),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(50),
+            Constraint::Percentage(35),
+            Constraint::Percentage(15),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Direct Roles ({}) ", app.user_direct_roles.len()))
+            .title_bottom(" ←→ Tabs │ Esc: Back "),
+    )
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::Rgb(50, 50, 80))
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ");
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.user_role_index));
+
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// Render user teams
+fn render_user_teams(frame: &mut Frame, app: &mut App, area: Rect) {
+    let header = Row::new(vec!["Team Name", "Type", "Default"])
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .user_teams
+        .iter()
+        .map(|team| {
+            let is_default = if team.is_default.unwrap_or(false) { "Yes" } else { "No" };
+            Row::new(vec![
+                team.name.clone(),
+                team.get_type_name().to_string(),
+                is_default.to_string(),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(50),
+            Constraint::Percentage(35),
+            Constraint::Percentage(15),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Teams ({}) ", app.user_teams.len()))
+            .title_bottom(" ←→ Tabs │ Esc: Back "),
+    )
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::Rgb(50, 50, 80))
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ");
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.user_team_index));
+
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// Render all roles (direct + inherited)
+fn render_user_all_roles(frame: &mut Frame, app: &mut App, area: Rect) {
+    let header = Row::new(vec!["Role Name", "Source", "Business Unit"])
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .user_all_roles
+        .iter()
+        .map(|assignment| {
+            let source = match &assignment.source {
+                RoleSource::Direct => "Direct".to_string(),
+                RoleSource::Team(team_name) => format!("Team: {}", team_name),
+            };
+            
+            let style = match &assignment.source {
+                RoleSource::Direct => Style::default().fg(Color::Green),
+                RoleSource::Team(_) => Style::default().fg(Color::Blue),
+            };
+
+            Row::new(vec![
+                assignment.role.name.clone(),
+                source,
+                assignment.role.get_business_unit_name(),
+            ]).style(style)
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(40),
+            Constraint::Percentage(35),
+            Constraint::Percentage(25),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" All Roles ({}) ", app.user_all_roles.len()))
+            .title_bottom(" 🟢 Direct │ 🔵 Team │ ←→ Tabs │ Esc: Back "),
+    )
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::Rgb(50, 50, 80))
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ");
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.user_role_index));
+
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// Render user info
+fn render_user_info(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(user) = &app.selected_user else {
+        return;
+    };
+
+    let bu_name = user.business_unit
+        .as_ref()
+        .and_then(|bu| bu.name.clone())
+        .unwrap_or_else(|| "-".to_string());
+
+    let info = vec![
+        format!("Full Name:       {}", user.get_display_name()),
+        format!("Domain Name:     {}", user.domain_name.as_deref().unwrap_or("-")),
+        format!("Email:           {}", user.email.as_deref().unwrap_or("-")),
+        format!("Title:           {}", user.title.as_deref().unwrap_or("-")),
+        format!("Business Unit:   {}", bu_name),
+        format!("Status:          {}", user.get_status()),
+        format!("Created On:      {}", user.created_on.as_deref().unwrap_or("-")),
+        String::new(),
+        format!("Direct Roles:    {}", app.user_direct_roles.len()),
+        format!("Teams:           {}", app.user_teams.len()),
+        format!("Total Roles:     {} (including team roles)", app.user_all_roles.len()),
+    ];
+
+    let text: Vec<Line> = info.into_iter().map(Line::from).collect();
+
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" User Info ")
+                .title_bottom(" ←→ Tabs │ Esc: Back "),
+        )
+        .wrap(Wrap { trim: false });
+
     frame.render_widget(paragraph, area);
 }
 

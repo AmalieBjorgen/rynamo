@@ -145,7 +145,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
         KeyCode::Char('q') => {
             // Only quit from main views, go back from detail views
             match app.view {
-                View::EntityDetail | View::SolutionDetail => app.go_back(),
+                View::EntityDetail | View::SolutionDetail | View::UserDetail => app.go_back(),
                 _ => app.should_quit = true,
             }
             return;
@@ -170,6 +170,15 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                 app.view = View::Solutions;
                 if app.solutions.is_empty() {
                     app.load_solutions().await;
+                }
+            }
+            return;
+        }
+        KeyCode::Char('3') => {
+            if app.view != View::Users && app.view != View::UserDetail {
+                app.view = View::Users;
+                if app.users.is_empty() {
+                    app.load_users().await;
                 }
             }
             return;
@@ -205,6 +214,13 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_entity_detail(&logical_name).await;
                 }
             }
+            View::Users => {
+                if let Some(user) = app.get_selected_user().cloned() {
+                    let user_id = user.id.clone();
+                    app.enter_user_detail();
+                    app.load_user_detail(&user_id).await;
+                }
+            }
             _ => {}
         }
     }
@@ -228,6 +244,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Entities => app.filter_entities(),
                 View::EntityDetail => app.filter_attributes(),
                 View::Solutions => app.filter_solutions(),
+                View::Users => app.filter_users(),
                 _ => {}
             }
         }
@@ -239,6 +256,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Entities => app.filter_entities(),
                 View::EntityDetail => app.filter_attributes(),
                 View::Solutions => app.filter_solutions(),
+                View::Users => app.filter_users(),
                 _ => {}
             }
         }

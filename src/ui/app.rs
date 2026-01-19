@@ -1,7 +1,10 @@
 //! Application state and main TUI logic
 
 use crate::api::DataverseClient;
-use crate::models::{AttributeMetadata, EntityMetadata, RelationshipMetadata, Solution};
+use crate::models::{
+    AttributeMetadata, EntityMetadata, RelationshipMetadata, RoleAssignment, RoleSource,
+    SecurityRole, Solution, SystemUser, Team,
+};
 use super::input::{InputMode, KeyBindings};
 use std::sync::Arc;
 
@@ -13,6 +16,8 @@ pub enum View {
     EntityDetail,
     Solutions,
     SolutionDetail,
+    Users,
+    UserDetail,
 }
 
 /// Application state for the TUI
@@ -31,6 +36,16 @@ pub enum EntityTab {
     Attributes,
     Relationships,
     Metadata,
+}
+
+/// Detail tab for user view
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UserTab {
+    #[default]
+    DirectRoles,
+    Teams,
+    AllRoles,
+    Info,
 }
 
 /// Main application struct
@@ -57,40 +72,40 @@ pub struct App {
     pub search_query: String,
 
     // Entity list state
-    /// All entities loaded
     pub entities: Vec<EntityMetadata>,
-    /// Filtered entities (matching search)
     pub filtered_entities: Vec<usize>,
-    /// Selected entity index in filtered list
     pub entity_index: usize,
 
     // Entity detail state
-    /// Currently selected entity for detail view
     pub selected_entity: Option<EntityMetadata>,
-    /// Attributes of selected entity
     pub entity_attributes: Vec<AttributeMetadata>,
-    /// Filtered attributes
     pub filtered_attributes: Vec<usize>,
-    /// Selected attribute index
     pub attribute_index: usize,
-    /// One-to-many relationships
     pub one_to_many: Vec<RelationshipMetadata>,
-    /// Many-to-one relationships
     pub many_to_one: Vec<RelationshipMetadata>,
-    /// Many-to-many relationships
     pub many_to_many: Vec<RelationshipMetadata>,
-    /// Current tab in entity detail
     pub entity_tab: EntityTab,
-    /// Selected relationship index
     pub relationship_index: usize,
 
     // Solution list state
-    /// All solutions
     pub solutions: Vec<Solution>,
-    /// Filtered solutions
     pub filtered_solutions: Vec<usize>,
-    /// Selected solution index
     pub solution_index: usize,
+
+    // User list state
+    pub users: Vec<SystemUser>,
+    pub filtered_users: Vec<usize>,
+    pub user_index: usize,
+    pub show_disabled_users: bool,
+
+    // User detail state
+    pub selected_user: Option<SystemUser>,
+    pub user_tab: UserTab,
+    pub user_direct_roles: Vec<SecurityRole>,
+    pub user_teams: Vec<Team>,
+    pub user_all_roles: Vec<RoleAssignment>,
+    pub user_role_index: usize,
+    pub user_team_index: usize,
 
     /// Should quit
     pub should_quit: bool,
@@ -122,6 +137,17 @@ impl App {
             solutions: Vec::new(),
             filtered_solutions: Vec::new(),
             solution_index: 0,
+            users: Vec::new(),
+            filtered_users: Vec::new(),
+            user_index: 0,
+            show_disabled_users: false,
+            selected_user: None,
+            user_tab: UserTab::DirectRoles,
+            user_direct_roles: Vec::new(),
+            user_teams: Vec::new(),
+            user_all_roles: Vec::new(),
+            user_role_index: 0,
+            user_team_index: 0,
             should_quit: false,
         }
     }
@@ -133,7 +159,6 @@ impl App {
 
         match self.client.get_entities().await {
             Ok(mut entities) => {
-                // Sort by logical name
                 entities.sort_by(|a, b| a.logical_name.cmp(&b.logical_name));
                 self.filtered_entities = (0..entities.len()).collect();
                 self.entities = entities;
@@ -151,7 +176,6 @@ impl App {
         self.state = AppState::Loading;
         self.error = None;
 
-        // Load attributes
         match self.client.get_entity_attributes(logical_name).await {
             Ok(mut attrs) => {
                 attrs.sort_by(|a, b| a.logical_name.cmp(&b.logical_name));
@@ -165,7 +189,6 @@ impl App {
             }
         }
 
-        // Load relationships
         if let Ok(rels) = self.client.get_entity_one_to_many(logical_name).await {
             self.one_to_many = rels;
         }
@@ -198,6 +221,91 @@ impl App {
                 self.state = AppState::Error;
             }
         }
+    }
+
+    /// Load users
+    pub async fn load_users(&mut self) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        let result = if self.show_disabled_users {
+            self.client.get_all_users().await
+        } else {
+            self.client.get_users().await
+        };
+
+        match result {
+            Ok(users) => {
+                self.filtered_users = (0..users.len()).collect();
+                self.users = users;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load users: {}", e));
+                self.state = AppState::Error;
+            }
+        }
+    }
+
+    /// Load user details (roles, teams)
+    pub async fn load_user_detail(&mut self, user_id: &str) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        // Load direct roles
+        match self.client.get_user_roles(user_id).await {
+            Ok(roles) => {
+                self.user_direct_roles = roles;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load user roles: {}", e));
+                self.state = AppState::Error;
+                return;
+            }
+        }
+
+        // Load teams
+        match self.client.get_user_teams(user_id).await {
+            Ok(teams) => {
+                self.user_teams = teams;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load user teams: {}", e));
+                self.state = AppState::Error;
+                return;
+            }
+        }
+
+        // Build combined role list (direct + from teams)
+        self.user_all_roles.clear();
+
+        // Add direct roles
+        for role in &self.user_direct_roles {
+            self.user_all_roles.push(RoleAssignment {
+                role: role.clone(),
+                source: RoleSource::Direct,
+            });
+        }
+
+        // Add team roles
+        for team in &self.user_teams {
+            if let Ok(team_roles) = self.client.get_team_roles(&team.id).await {
+                for role in team_roles {
+                    self.user_all_roles.push(RoleAssignment {
+                        role,
+                        source: RoleSource::Team(team.name.clone()),
+                    });
+                }
+            }
+        }
+
+        // Sort by role name
+        self.user_all_roles.sort_by(|a, b| a.role.name.cmp(&b.role.name));
+
+        self.user_role_index = 0;
+        self.user_team_index = 0;
+        self.user_tab = UserTab::DirectRoles;
+        self.state = AppState::Ready;
     }
 
     /// Apply search filter to entities
@@ -260,6 +368,27 @@ impl App {
         self.solution_index = 0;
     }
 
+    /// Apply search filter to users
+    pub fn filter_users(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered_users = (0..self.users.len()).collect();
+        } else {
+            self.filtered_users = self
+                .users
+                .iter()
+                .enumerate()
+                .filter(|(_, u)| {
+                    u.get_display_name().to_lowercase().contains(&query)
+                        || u.domain_name.as_ref().map(|d| d.to_lowercase().contains(&query)).unwrap_or(false)
+                        || u.email.as_ref().map(|e| e.to_lowercase().contains(&query)).unwrap_or(false)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.user_index = 0;
+    }
+
     /// Navigate up in the current list
     pub fn navigate_up(&mut self) {
         match self.view {
@@ -286,6 +415,24 @@ impl App {
                     self.solution_index -= 1;
                 }
             }
+            View::Users => {
+                if self.user_index > 0 {
+                    self.user_index -= 1;
+                }
+            }
+            View::UserDetail => match self.user_tab {
+                UserTab::DirectRoles | UserTab::AllRoles => {
+                    if self.user_role_index > 0 {
+                        self.user_role_index -= 1;
+                    }
+                }
+                UserTab::Teams => {
+                    if self.user_team_index > 0 {
+                        self.user_team_index -= 1;
+                    }
+                }
+                UserTab::Info => {}
+            },
             View::SolutionDetail => {}
         }
     }
@@ -323,6 +470,37 @@ impl App {
                     self.solution_index += 1;
                 }
             }
+            View::Users => {
+                if !self.filtered_users.is_empty()
+                    && self.user_index < self.filtered_users.len() - 1
+                {
+                    self.user_index += 1;
+                }
+            }
+            View::UserDetail => match self.user_tab {
+                UserTab::DirectRoles => {
+                    if !self.user_direct_roles.is_empty()
+                        && self.user_role_index < self.user_direct_roles.len() - 1
+                    {
+                        self.user_role_index += 1;
+                    }
+                }
+                UserTab::AllRoles => {
+                    if !self.user_all_roles.is_empty()
+                        && self.user_role_index < self.user_all_roles.len() - 1
+                    {
+                        self.user_role_index += 1;
+                    }
+                }
+                UserTab::Teams => {
+                    if !self.user_teams.is_empty()
+                        && self.user_team_index < self.user_teams.len() - 1
+                    {
+                        self.user_team_index += 1;
+                    }
+                }
+                UserTab::Info => {}
+            },
             View::SolutionDetail => {}
         }
     }
@@ -337,14 +515,17 @@ impl App {
                     EntityTab::Metadata => EntityTab::Attributes,
                 };
             }
-            _ => {
-                // Switch between main views
-                self.view = match self.view {
-                    View::Entities => View::Solutions,
-                    View::Solutions => View::Entities,
-                    other => other,
+            View::UserDetail => {
+                self.user_tab = match self.user_tab {
+                    UserTab::DirectRoles => UserTab::Teams,
+                    UserTab::Teams => UserTab::AllRoles,
+                    UserTab::AllRoles => UserTab::Info,
+                    UserTab::Info => UserTab::DirectRoles,
                 };
+                self.user_role_index = 0;
+                self.user_team_index = 0;
             }
+            _ => {}
         }
     }
 
@@ -358,13 +539,17 @@ impl App {
                     EntityTab::Metadata => EntityTab::Relationships,
                 };
             }
-            _ => {
-                self.view = match self.view {
-                    View::Entities => View::Solutions,
-                    View::Solutions => View::Entities,
-                    other => other,
+            View::UserDetail => {
+                self.user_tab = match self.user_tab {
+                    UserTab::DirectRoles => UserTab::Info,
+                    UserTab::Teams => UserTab::DirectRoles,
+                    UserTab::AllRoles => UserTab::Teams,
+                    UserTab::Info => UserTab::AllRoles,
                 };
+                self.user_role_index = 0;
+                self.user_team_index = 0;
             }
+            _ => {}
         }
     }
 
@@ -382,11 +567,27 @@ impl App {
             .and_then(|&i| self.solutions.get(i))
     }
 
+    /// Get currently selected user
+    pub fn get_selected_user(&self) -> Option<&SystemUser> {
+        self.filtered_users
+            .get(self.user_index)
+            .and_then(|&i| self.users.get(i))
+    }
+
     /// Enter detail view for selected entity
     pub fn enter_entity_detail(&mut self) {
         if let Some(entity) = self.get_selected_entity().cloned() {
             self.selected_entity = Some(entity);
             self.view = View::EntityDetail;
+            self.search_query.clear();
+        }
+    }
+
+    /// Enter detail view for selected user
+    pub fn enter_user_detail(&mut self) {
+        if let Some(user) = self.get_selected_user().cloned() {
+            self.selected_user = Some(user);
+            self.view = View::UserDetail;
             self.search_query.clear();
         }
     }
@@ -400,6 +601,10 @@ impl App {
             }
             View::SolutionDetail => {
                 self.view = View::Solutions;
+                self.search_query.clear();
+            }
+            View::UserDetail => {
+                self.view = View::Users;
                 self.search_query.clear();
             }
             _ => {}
