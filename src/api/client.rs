@@ -46,7 +46,11 @@ impl DataverseClient {
     /// Make an authenticated GET request
     pub async fn get(&self, endpoint: &str) -> Result<Response> {
         let token = self.get_token().await?;
-        let url = format!("{}/{}", self.api_url(), endpoint.trim_start_matches('/'));
+        let url = if endpoint.starts_with("http") {
+            endpoint.to_string()
+        } else {
+            format!("{}/{}", self.api_url(), endpoint.trim_start_matches('/'))
+        };
 
         let response = self
             .http_client
@@ -55,6 +59,7 @@ impl DataverseClient {
             .header("Accept", "application/json")
             .header("OData-MaxVersion", "4.0")
             .header("OData-Version", "4.0")
+            .header("Prefer", "odata.include-annotations=\"*\"")
             .send()
             .await
             .context("Failed to send request to Dataverse")?;

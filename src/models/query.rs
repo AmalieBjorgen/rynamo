@@ -2,6 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+
+/// Metadata for a lookup field
+#[derive(Debug, Clone, Default)]
+pub struct LookupInfo {
+    /// GUID of the related record
+    pub id: String,
+    /// Logical name of the target entity
+    pub logical_name: String,
+    /// Formatted display value if available
+    pub display_name: Option<String>,
+}
 
 /// A query definition for executing against an entity
 #[derive(Debug, Clone, Default)]
@@ -71,8 +83,12 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     /// Rows of data (each row is a vec of string values)
     pub rows: Vec<Vec<String>>,
+    /// Lookup metadata for specific cells: (row_index, col_index) -> LookupInfo
+    pub lookups: HashMap<(usize, usize), LookupInfo>,
     /// Total count if available
     pub count: Option<usize>,
+    /// Link to next page of results
+    pub next_link: Option<String>,
     /// Error message if query failed
     pub error: Option<String>,
     /// Raw JSON response for inspection
@@ -94,6 +110,10 @@ impl QueryResult {
         };
 
         if records.is_empty() {
+            // Still check for next link even if page is empty (rare but possible)
+            if let Some(JsonValue::String(link)) = json.get("@odata.nextLink") {
+                result.next_link = Some(link.clone());
+            }
             return result;
         }
 
@@ -110,17 +130,46 @@ impl QueryResult {
         }
 
         // Extract rows
-        for record in records {
+        for (row_idx, record) in records.iter().enumerate() {
             if let JsonValue::Object(obj) = record {
-                let row: Vec<String> = result
-                    .columns
-                    .iter()
-                    .map(|col| {
-                        obj.get(col)
-                            .map(|v| format_json_value(v))
-                            .unwrap_or_else(|| "-".to_string())
-                    })
-                    .collect();
+                let mut row = Vec::new();
+                for (col_idx, col) in result.columns.iter().enumerate() {
+                    // Check for formatted value annotation first
+                    let formatted_key = format!("{}@OData.Community.Display.V1.FormattedValue", col);
+                    let display_val = if let Some(JsonValue::String(s)) = obj.get(&formatted_key) {
+                        s.clone()
+                    } else if let Some(v) = obj.get(col) {
+                        format_json_value(v)
+                    } else {
+                        "-".to_string()
+                    };
+                    row.push(display_val.clone());
+
+                    // Check if it's a lookup
+                    let lookup_logical_key = format!("{}@Microsoft.Dynamics.CRM.lookuplogicalname", col);
+                    if let Some(JsonValue::String(logical_name)) = obj.get(&lookup_logical_key) {
+                        if let Some(JsonValue::String(id)) = obj.get(col) {
+                            result.lookups.insert((row_idx, col_idx), LookupInfo {
+                                id: id.clone(),
+                                logical_name: logical_name.clone(),
+                                display_name: Some(display_val),
+                            });
+                        }
+                    } else if col.starts_with('_') && col.ends_with("_value") {
+                        // Dataverse often returns lookups as _name_value
+                        let base_name = &col[1..col.len() - 6];
+                        let logical_key = format!("{}@Microsoft.Dynamics.CRM.lookuplogicalname", col);
+                        if let Some(JsonValue::String(logical_name)) = obj.get(&logical_key) {
+                             if let Some(JsonValue::String(id)) = obj.get(col) {
+                                result.lookups.insert((row_idx, col_idx), LookupInfo {
+                                    id: id.clone(),
+                                    logical_name: logical_name.clone(),
+                                    display_name: Some(display_val),
+                                });
+                            }
+                        }
+                    }
+                }
                 result.rows.push(row);
             }
         }
@@ -128,6 +177,11 @@ impl QueryResult {
         // Get count if available
         if let Some(JsonValue::Number(n)) = json.get("@odata.count") {
             result.count = n.as_u64().map(|n| n as usize);
+        }
+
+        // Get next link if available
+        if let Some(JsonValue::String(link)) = json.get("@odata.nextLink") {
+            result.next_link = Some(link.clone());
         }
 
         result
