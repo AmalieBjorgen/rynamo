@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::app::{App, AppState, EntityTab, QueryMode, UserTab, View};
 use super::input::InputMode;
-use crate::models::{RoleSource, SolutionComponent};
+use crate::models::{ComponentType, RoleSource, SolutionComponent};
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -413,35 +413,79 @@ fn render_solution_detail(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Solution info
+            Constraint::Length(7), // Solution info
+            Constraint::Length(3), // Statistics summary / Search bar
             Constraint::Min(0),    // Components list
         ])
         .split(area);
 
-    // Solution Info
+    // 1. Solution Information
     let info_items = vec![
-        format!("Unique Name:  {}", solution.unique_name),
         format!("Friendly Name: {}", solution.get_display_name()),
+        format!("Unique Name:   {}", solution.unique_name),
         format!("Version:       {}", solution.version.as_deref().unwrap_or("-")),
         format!("Managed:       {}", if solution.is_managed.unwrap_or(false) { "Yes" } else { "No" }),
+        format!("Publisher:     {}", solution.publisher_id.as_deref().unwrap_or("-")),
     ];
     let info = Paragraph::new(info_items.join("\n"))
         .block(Block::default().borders(Borders::ALL).title(" Solution Information "));
     frame.render_widget(info, chunks[0]);
 
-    // Components List
-    let items: Vec<ListItem> = app.solution_components
+    // 2. Statistics & Search
+    let mut stats = std::collections::HashMap::new();
+    for comp in &app.solution_components {
+        *stats.entry(comp.get_component_type()).or_insert(0) += 1;
+    }
+    let mut sorted_stats: Vec<_> = stats.into_iter().collect();
+    sorted_stats.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+
+    let stats_str = sorted_stats.iter()
+        .take(5)
+        .map(|(t, c)| format!("{}: {}", t.display_name(), c))
+        .collect::<Vec<_>>()
+        .join("  |  ");
+
+    let search_text = if app.input_mode == InputMode::Search && app.view == View::SolutionDetail {
+        format!("Search: {}_ (Type to filter)", app.search_query)
+    } else if !app.search_query.is_empty() {
+        format!("Filter: {} (Press '/' to search, Esc to clear)", app.search_query)
+    } else {
+        format!("Summary: {} (Press '/' to search)", stats_str)
+    };
+
+    let stats_para = Paragraph::new(search_text)
+        .block(Block::default().borders(Borders::ALL).title(" Components Summary "));
+    frame.render_widget(stats_para, chunks[1]);
+
+    // 3. Components List
+    let items: Vec<ListItem> = app.filtered_components
         .iter()
-        .map(|comp: &SolutionComponent| {
+        .map(|&idx| {
+            let comp = &app.solution_components[idx];
             let type_name = comp.get_component_type().display_name();
             let object_id = comp.object_id.as_deref().unwrap_or("-");
-            let content = format!("{:<25} ID: {}", type_name, object_id);
-            ListItem::new(content)
+            
+            // Try to resolve name if it's an entity
+            let mut resolved_name = String::new();
+            if comp.get_component_type() == ComponentType::Entity {
+                if let Some(entity) = app.entities.iter().find(|e| e.metadata_id.to_lowercase() == object_id.to_lowercase()) {
+                    resolved_name = format!(" [{}]", entity.get_display_name());
+                }
+            }
+
+            let mut style = Style::default();
+            if comp.get_component_type() == ComponentType::Entity {
+                style = style.fg(Color::Cyan);
+            }
+
+            let content = format!("{:<20} {}{}", type_name, object_id, resolved_name);
+            ListItem::new(content).style(style)
         })
         .collect();
 
     let title = format!(
-        " Components ({}) - ↑↓ to Scroll / Esc to Go Back ",
+        " Components (Showing {} of {}) - Enter: Drill Down / Esc: Back ",
+        app.filtered_components.len(),
         app.solution_components.len()
     );
     let list = List::new(items)
@@ -454,10 +498,10 @@ fn render_solution_detail(frame: &mut Frame, app: &App, area: Rect) {
         .highlight_symbol("▶ ");
 
     let mut list_state = ListState::default();
-    if !app.solution_components.is_empty() {
+    if !app.filtered_components.is_empty() {
         list_state.select(Some(app.component_index));
     }
-    frame.render_stateful_widget(list, chunks[1], &mut list_state);
+    frame.render_stateful_widget(list, chunks[2], &mut list_state);
 }
 
 /// Render user list

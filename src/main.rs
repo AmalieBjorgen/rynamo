@@ -317,6 +317,9 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_solution_detail(&solution_id).await;
                 }
             }
+            View::SolutionDetail => {
+                app.jump_to_component().await;
+            }
             View::RecordDetail => {
                 app.navigate_to_related_record().await;
             }
@@ -343,6 +346,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Entities => app.filter_entities(),
                 View::EntityDetail => app.filter_attributes(),
                 View::Solutions => app.filter_solutions(),
+                View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 _ => {}
             }
@@ -355,6 +359,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Entities => app.filter_entities(),
                 View::EntityDetail => app.filter_attributes(),
                 View::Solutions => app.filter_solutions(),
+                View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 _ => {}
             }

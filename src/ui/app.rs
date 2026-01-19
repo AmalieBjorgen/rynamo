@@ -3,7 +3,8 @@
 use crate::api::DataverseClient;
 use crate::models::{
     AttributeMetadata, EntityMetadata, QueryResult,
-    RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SolutionComponent, SystemUser, Team,
+    RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SolutionComponent,
+    ComponentType, SystemUser, Team,
 };
 use super::input::{InputMode, KeyBindings};
 use std::sync::Arc;
@@ -108,6 +109,7 @@ pub struct App {
     // Solution detail state
     pub selected_solution: Option<Solution>,
     pub solution_components: Vec<SolutionComponent>,
+    pub filtered_components: Vec<usize>,
     pub component_index: usize,
 
     // User list state
@@ -262,6 +264,7 @@ impl App {
             solution_index: 0,
             selected_solution: None,
             solution_components: Vec::new(),
+            filtered_components: Vec::new(),
             component_index: 0,
             users: Vec::new(),
             filtered_users: Vec::new(),
@@ -612,11 +615,6 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail => {
-                if self.component_index > 0 {
-                    self.component_index -= 1;
-                }
-            }
             View::RecordDetail => {
                 if self.record_detail_index > 0 {
                     self.record_detail_index -= 1;
@@ -716,8 +714,8 @@ impl App {
                 UserTab::Info => {}
             },
             View::SolutionDetail => {
-                if !self.solution_components.is_empty()
-                    && self.component_index < self.solution_components.len() - 1
+                if !self.filtered_components.is_empty()
+                    && self.component_index < self.filtered_components.len() - 1
                 {
                     self.component_index += 1;
                 }
@@ -827,6 +825,7 @@ impl App {
             self.selected_solution = Some(solution);
             self.view = View::SolutionDetail;
             self.search_query.clear();
+            self.filtered_components.clear();
         }
     }
 
@@ -901,6 +900,7 @@ impl App {
         match self.client.get_solution_components(solution_id).await {
             Ok(components) => {
                 self.solution_components = components;
+                self.filter_solution_components();
                 self.component_index = 0;
                 self.state = AppState::Ready;
             }
@@ -909,6 +909,61 @@ impl App {
                 self.state = AppState::Error;
             }
         }
+    }
+
+    /// Get selected solution component
+    pub fn get_selected_solution_component(&self) -> Option<&SolutionComponent> {
+        self.filtered_components
+            .get(self.component_index)
+            .and_then(|&i| self.solution_components.get(i))
+    }
+
+    /// Jump to the selected component if possible
+    pub async fn jump_to_component(&mut self) -> bool {
+        let Some(comp) = self.get_selected_solution_component().cloned() else { return false; };
+        match comp.get_component_type() {
+            ComponentType::Entity => {
+                let Some(object_id) = &comp.object_id else { return false; };
+                // Find entity by MetadataId
+                let entity_logical_name = self.entities.iter()
+                    .find(|e| e.metadata_id.to_lowercase() == object_id.to_lowercase())
+                    .map(|e| e.logical_name.clone());
+                
+                if let Some(logical_name) = entity_logical_name {
+                    self.load_entity_detail(&logical_name).await;
+                    self.selected_entity = self.entities.iter().find(|e| e.logical_name == logical_name).cloned();
+                    self.view = View::EntityDetail;
+                    self.entity_tab = EntityTab::Attributes;
+                    return true;
+                }
+            }
+            _ => {
+                // Not supported yet
+            }
+        }
+        false
+    }
+
+    /// Filter solution components
+    pub fn filter_solution_components(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered_components = (0..self.solution_components.len()).collect();
+        } else {
+            self.filtered_components = self
+                .solution_components
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    let type_name = c.get_component_type().display_name().to_lowercase();
+                    let object_id = c.object_id.as_deref().unwrap_or("").to_lowercase();
+                    
+                    type_name.contains(&query) || object_id.contains(&query)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.component_index = 0;
     }
 
     /// Go back from detail view

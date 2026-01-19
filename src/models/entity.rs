@@ -32,6 +32,9 @@ pub struct LabelValue {
 /// Entity metadata from EntityDefinitions
 #[derive(Debug, Clone, Deserialize)]
 pub struct EntityMetadata {
+    #[serde(rename = "MetadataId")]
+    pub metadata_id: String,
+
     #[serde(rename = "LogicalName")]
     pub logical_name: String,
 
@@ -85,6 +88,9 @@ impl EntityMetadata {
 /// Attribute metadata
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttributeMetadata {
+    #[serde(rename = "MetadataId")]
+    pub metadata_id: String,
+
     #[serde(rename = "LogicalName")]
     pub logical_name: String,
 

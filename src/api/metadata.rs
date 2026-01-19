@@ -8,7 +8,7 @@ impl DataverseClient {
     /// Get all entity definitions
     pub async fn get_entities(&self) -> Result<Vec<EntityMetadata>> {
         let response: ODataResponse<EntityMetadata> = self
-            .get_json("EntityDefinitions?$select=LogicalName,DisplayName,SchemaName,Description,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName,IsCustomEntity,IsManaged,ObjectTypeCode")
+            .get_json("EntityDefinitions?$select=LogicalName,DisplayName,SchemaName,Description,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName,IsCustomEntity,IsManaged,ObjectTypeCode,MetadataId")
             .await?;
         Ok(response.value)
     }
@@ -16,7 +16,7 @@ impl DataverseClient {
     /// Get a specific entity by logical name
     pub async fn get_entity(&self, logical_name: &str) -> Result<EntityMetadata> {
         let endpoint = format!(
-            "EntityDefinitions(LogicalName='{}')?$select=LogicalName,DisplayName,SchemaName,Description,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName,IsCustomEntity,IsManaged,ObjectTypeCode",
+            "EntityDefinitions(LogicalName='{}')?$select=LogicalName,DisplayName,SchemaName,Description,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName,IsCustomEntity,IsManaged,ObjectTypeCode,MetadataId",
             logical_name
         );
         self.get_json(&endpoint).await
@@ -25,7 +25,7 @@ impl DataverseClient {
     /// Get attributes for an entity
     pub async fn get_entity_attributes(&self, logical_name: &str) -> Result<Vec<AttributeMetadata>> {
         let endpoint = format!(
-            "EntityDefinitions(LogicalName='{}')/Attributes?$select=LogicalName,DisplayName,SchemaName,AttributeType,AttributeTypeName,RequiredLevel,IsCustomAttribute,IsPrimaryId,IsPrimaryName,Description",
+            "EntityDefinitions(LogicalName='{}')/Attributes?$select=LogicalName,DisplayName,SchemaName,AttributeType,AttributeTypeName,RequiredLevel,IsCustomAttribute,IsPrimaryId,IsPrimaryName,Description,MetadataId",
             logical_name
         );
         let response: ODataResponse<AttributeMetadata> = self.get_json(&endpoint).await?;

@@ -20,6 +20,9 @@ pub struct Solution {
     #[serde(rename = "ismanaged")]
     pub is_managed: Option<bool>,
 
+    #[serde(rename = "_publisherid_value")]
+    pub publisher_id: Option<String>,
+
     #[serde(rename = "description")]
     pub description: Option<String>,
 
@@ -60,7 +63,7 @@ impl SolutionComponent {
 }
 
 /// Component types in solutions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ComponentType {
     Entity,
     Attribute,
