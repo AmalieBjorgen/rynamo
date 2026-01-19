@@ -25,7 +25,7 @@ impl DataverseClient {
     /// Get attributes for an entity
     pub async fn get_entity_attributes(&self, logical_name: &str) -> Result<Vec<AttributeMetadata>> {
         let endpoint = format!(
-            "EntityDefinitions(LogicalName='{}')/Attributes?$select=LogicalName,DisplayName,SchemaName,AttributeType,AttributeTypeName,RequiredLevel,IsCustomAttribute,IsPrimaryId,IsPrimaryName,Description,MaxLength,MinValue,MaxValue",
+            "EntityDefinitions(LogicalName='{}')/Attributes?$select=LogicalName,DisplayName,SchemaName,AttributeType,AttributeTypeName,RequiredLevel,IsCustomAttribute,IsPrimaryId,IsPrimaryName,Description",
             logical_name
         );
         let response: ODataResponse<AttributeMetadata> = self.get_json(&endpoint).await?;

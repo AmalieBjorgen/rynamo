@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Tabs, Wrap},
     Frame,
 };
 
@@ -12,7 +12,7 @@ use super::app::{App, AppState, EntityTab, View};
 use super::input::InputMode;
 
 /// Render the complete UI
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -54,7 +54,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render the main content area
-fn render_content(frame: &mut Frame, app: &App, area: Rect) {
+fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
     match app.state {
         AppState::Loading => {
             let loading = Paragraph::new("Loading...")
@@ -80,12 +80,11 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render the entity list view
-fn render_entity_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_entity_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = app
         .filtered_entities
         .iter()
-        .enumerate()
-        .map(|(idx, &entity_idx)| {
+        .map(|&entity_idx| {
             let entity = &app.entities[entity_idx];
             let is_custom = entity.is_custom_entity.unwrap_or(false);
             let prefix = if is_custom { "⚙ " } else { "  " };
@@ -97,12 +96,7 @@ fn render_entity_list(frame: &mut Frame, app: &App, area: Rect) {
                 entity.get_display_name()
             );
 
-            let style = if idx == app.entity_index {
-                Style::default()
-                    .bg(Color::Rgb(50, 50, 80))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_custom {
+            let style = if is_custom {
                 Style::default().fg(Color::Cyan)
             } else {
                 Style::default()
@@ -118,18 +112,30 @@ fn render_entity_list(frame: &mut Frame, app: &App, area: Rect) {
         app.entities.len()
     );
 
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .title_bottom(" ↑↓ Navigate │ Enter: Details │ /: Search │ q: Quit "),
-    );
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_bottom(" ↑↓ Navigate │ Enter: Details │ /: Search │ q: Quit "),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
 
-    frame.render_widget(list, area);
+    // Create list state with current selection
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.entity_index));
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Render entity detail view
-fn render_entity_detail(frame: &mut Frame, app: &App, area: Rect) {
+fn render_entity_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(entity) = &app.selected_entity else {
         return;
     };
@@ -184,7 +190,7 @@ fn render_entity_detail(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render attributes table
-fn render_attributes(frame: &mut Frame, app: &App, area: Rect) {
+fn render_attributes(frame: &mut Frame, app: &mut App, area: Rect) {
     let header = Row::new(vec!["Logical Name", "Display Name", "Type", "Required"])
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .bottom_margin(1);
@@ -192,18 +198,9 @@ fn render_attributes(frame: &mut Frame, app: &App, area: Rect) {
     let rows: Vec<Row> = app
         .filtered_attributes
         .iter()
-        .enumerate()
-        .map(|(idx, &attr_idx)| {
+        .map(|&attr_idx| {
             let attr = &app.entity_attributes[attr_idx];
             let required = if attr.is_required() { "Yes" } else { "No" };
-            
-            let style = if idx == app.attribute_index {
-                Style::default()
-                    .bg(Color::Rgb(50, 50, 80))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
 
             Row::new(vec![
                 attr.logical_name.clone(),
@@ -211,7 +208,6 @@ fn render_attributes(frame: &mut Frame, app: &App, area: Rect) {
                 attr.get_type_name(),
                 required.to_string(),
             ])
-            .style(style)
         })
         .collect();
 
@@ -234,13 +230,22 @@ fn render_attributes(frame: &mut Frame, app: &App, area: Rect) {
                 app.entity_attributes.len()
             ))
             .title_bottom(" ←→ Tabs │ Esc: Back │ /: Search "),
-    );
+    )
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::Rgb(50, 50, 80))
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ");
 
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.attribute_index));
+
+    frame.render_stateful_widget(table, area, &mut table_state);
 }
 
 /// Render relationships list
-fn render_relationships(frame: &mut Frame, app: &App, area: Rect) {
+fn render_relationships(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
 
     // 1:N relationships
@@ -287,14 +292,23 @@ fn render_relationships(frame: &mut Frame, app: &App, area: Rect) {
         items.push(ListItem::new("No relationships found").style(Style::default().fg(Color::DarkGray)));
     }
 
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Relationships ")
-            .title_bottom(" ←→ Tabs │ Esc: Back "),
-    );
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Relationships ")
+                .title_bottom(" ←→ Tabs │ Esc: Back "),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        );
 
-    frame.render_widget(list, area);
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.relationship_index));
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Render entity metadata
@@ -333,12 +347,11 @@ fn render_entity_metadata(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Render solution list
-fn render_solution_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_solution_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = app
         .filtered_solutions
         .iter()
-        .enumerate()
-        .map(|(idx, &sol_idx)| {
+        .map(|&sol_idx| {
             let solution = &app.solutions[sol_idx];
             let managed = if solution.is_managed.unwrap_or(false) {
                 "🔒"
@@ -353,16 +366,7 @@ fn render_solution_list(frame: &mut Frame, app: &App, area: Rect) {
                 solution.version.as_deref().unwrap_or("?")
             );
 
-            let style = if idx == app.solution_index {
-                Style::default()
-                    .bg(Color::Rgb(50, 50, 80))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            ListItem::new(content).style(style)
+            ListItem::new(content)
         })
         .collect();
 
@@ -372,14 +376,25 @@ fn render_solution_list(frame: &mut Frame, app: &App, area: Rect) {
         app.solutions.len()
     );
 
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .title_bottom(" 🔒 Managed │ 📝 Unmanaged │ /: Search │ q: Quit "),
-    );
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_bottom(" 🔒 Managed │ 📝 Unmanaged │ /: Search │ q: Quit "),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
 
-    frame.render_widget(list, area);
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.solution_index));
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Render solution detail (placeholder for now)
