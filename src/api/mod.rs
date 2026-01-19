@@ -4,5 +4,6 @@ mod client;
 pub mod metadata;
 pub mod solutions;
 pub mod users;
+pub mod data;
 
 pub use client::DataverseClient;

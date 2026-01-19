@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::app::{App, AppState, EntityTab, UserTab, View};
 use super::input::InputMode;
-use crate::models::RoleSource;
+use crate::models::{QueryField, RoleSource};
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -35,11 +35,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Query [4]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
+        View::Query => 3,
     };
 
     let tabs = Tabs::new(titles)
@@ -79,6 +80,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::SolutionDetail => render_solution_detail(frame, app, area),
             View::Users => render_user_list(frame, app, area),
             View::UserDetail => render_user_detail(frame, app, area),
+            View::Query => render_query_view(frame, app, area),
         },
     }
 }
@@ -776,4 +778,179 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// Render the query builder view
+fn render_query_view(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(11), // Query input fields
+            Constraint::Min(0),     // Results
+        ])
+        .split(area);
+
+    render_query_form(frame, app, chunks[0]);
+    render_query_results(frame, app, chunks[1]);
+}
+
+/// Render the query input form
+fn render_query_form(frame: &mut Frame, app: &App, area: Rect) {
+    let fields = [
+        QueryField::Entity,
+        QueryField::Select,
+        QueryField::Filter,
+        QueryField::OrderBy,
+        QueryField::Top,
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for field in &fields {
+        let is_selected = app.query_field == *field;
+        let is_editing = is_selected && app.query_editing;
+
+        let label_style = if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Yellow)
+        };
+
+        let value = if is_editing {
+            format!("{}_", app.query_input)
+        } else {
+            match field {
+                QueryField::Entity => app.query.entity_name.clone(),
+                QueryField::Select => {
+                    if app.query.select.is_empty() {
+                        "(all)".to_string()
+                    } else {
+                        app.query.select.join(", ")
+                    }
+                }
+                QueryField::Filter => {
+                    if app.query.filter.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        app.query.filter.clone()
+                    }
+                }
+                QueryField::OrderBy => {
+                    if app.query.order_by.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        app.query.order_by.clone()
+                    }
+                }
+                QueryField::Top => app.query.top.map(|n| n.to_string()).unwrap_or("(all)".to_string()),
+            }
+        };
+
+        let value_style = if is_editing {
+            Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 80))
+        } else if is_selected {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let prefix = if is_selected { "▶ " } else { "  " };
+
+        lines.push(Line::from(vec![
+            Span::raw(prefix),
+            Span::styled(format!("{:<10}", field.label()), label_style),
+            Span::styled(value, value_style),
+        ]));
+    }
+
+    // Add help text
+    lines.push(Line::from(""));
+    let help = if app.query_editing {
+        "Enter: Apply │ Esc: Cancel"
+    } else {
+        "↑↓: Select field │ Enter: Edit │ F5: Run Query │ c: Clear │ q: Back"
+    };
+    lines.push(Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))));
+
+    // Show generated URL
+    lines.push(Line::from(""));
+    let url = app.query.build_url();
+    lines.push(Line::from(vec![
+        Span::styled("URL: ", Style::default().fg(Color::Yellow)),
+        Span::styled(url, Style::default().fg(Color::Blue)),
+    ]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Query Builder ")
+        );
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Render query results
+fn render_query_results(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Check for error
+    if let Some(ref error) = app.query_result.error {
+        let paragraph = Paragraph::new(error.as_str())
+            .style(Style::default().fg(Color::Red))
+            .block(Block::default().borders(Borders::ALL).title(" Error "))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // Check if we have results
+    if app.query_result.columns.is_empty() {
+        let paragraph = Paragraph::new("No results. Press F5 to run query.")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL).title(" Results "));
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    // Render results table
+    let header = Row::new(app.query_result.columns.clone())
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app.query_result.rows.iter().map(|row| {
+        Row::new(row.clone())
+    }).collect();
+
+    // Calculate column widths (equal distribution)
+    let col_count = app.query_result.columns.len();
+    let widths: Vec<Constraint> = if col_count > 0 {
+        vec![Constraint::Percentage((100 / col_count as u16).max(1)); col_count]
+    } else {
+        vec![]
+    };
+
+    let title = format!(
+        " Results ({} rows{}) ",
+        app.query_result.rows.len(),
+        app.query_result.count.map(|c| format!(" of {}", c)).unwrap_or_default()
+    );
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_bottom(" ↑↓: Navigate rows "),
+        )
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.query_result_index));
+
+    frame.render_stateful_widget(table, area, &mut table_state);
 }

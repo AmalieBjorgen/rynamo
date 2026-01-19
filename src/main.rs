@@ -146,6 +146,13 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             // Only quit from main views, go back from detail views
             match app.view {
                 View::EntityDetail | View::SolutionDetail | View::UserDetail => app.go_back(),
+                View::Query => {
+                    if app.query_editing {
+                        // q in editing mode just adds character
+                    } else {
+                        app.view = View::Entities;
+                    }
+                }
                 _ => app.should_quit = true,
             }
             return;
@@ -183,16 +190,40 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             return;
         }
+        KeyCode::Char('4') => {
+            app.view = View::Query;
+            return;
+        }
+        KeyCode::Char('Q') => {
+            // Jump to Query with selected entity
+            if app.view == View::Entities {
+                app.set_query_entity_from_selection();
+            }
+            app.view = View::Query;
+            return;
+        }
         _ => {}
     }
 
     // Navigation
     if app.key_bindings.is_up(key) {
-        app.navigate_up();
+        match app.view {
+            View::Query if !app.query_editing => {
+                app.query_field = app.query_field.prev();
+            }
+            View::Query if app.query_editing => {}
+            _ => app.navigate_up(),
+        }
         return;
     }
     if app.key_bindings.is_down(key) {
-        app.navigate_down();
+        match app.view {
+            View::Query if !app.query_editing => {
+                app.query_field = app.query_field.next();
+            }
+            View::Query if app.query_editing => {}
+            _ => app.navigate_down(),
+        }
         return;
     }
     if app.key_bindings.is_left(key) {
@@ -201,6 +232,51 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
     }
     if app.key_bindings.is_right(key) {
         app.next_tab();
+        return;
+    }
+
+    // Query view specific keys
+    if app.view == View::Query {
+        if app.query_editing {
+            // Editing mode
+            match key {
+                KeyCode::Enter => {
+                    app.apply_query_input();
+                    app.query_editing = false;
+                }
+                KeyCode::Esc => {
+                    app.query_editing = false;
+                }
+                KeyCode::Backspace => {
+                    app.query_input.pop();
+                }
+                KeyCode::Char(c) => {
+                    app.query_input.push(c);
+                }
+                _ => {}
+            }
+        } else {
+            // Normal mode
+            match key {
+                KeyCode::Enter => {
+                    app.load_query_field_to_input();
+                    app.query_editing = true;
+                }
+                KeyCode::F(5) => {
+                    app.execute_query().await;
+                }
+                KeyCode::Char('c') => {
+                    app.clear_query();
+                }
+                KeyCode::Up => {
+                    app.query_result_up();
+                }
+                KeyCode::Down => {
+                    app.query_result_down();
+                }
+                _ => {}
+            }
+        }
         return;
     }
 

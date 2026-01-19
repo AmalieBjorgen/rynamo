@@ -2,8 +2,8 @@
 
 use crate::api::DataverseClient;
 use crate::models::{
-    AttributeMetadata, EntityMetadata, RelationshipMetadata, RoleAssignment, RoleSource,
-    SecurityRole, Solution, SystemUser, Team,
+    AttributeMetadata, EntityMetadata, QueryDefinition, QueryField, QueryResult,
+    RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SystemUser, Team,
 };
 use super::input::{InputMode, KeyBindings};
 use std::sync::Arc;
@@ -18,6 +18,7 @@ pub enum View {
     SolutionDetail,
     Users,
     UserDetail,
+    Query,
 }
 
 /// Application state for the TUI
@@ -107,6 +108,14 @@ pub struct App {
     pub user_role_index: usize,
     pub user_team_index: usize,
 
+    // Query builder state
+    pub query: QueryDefinition,
+    pub query_field: QueryField,
+    pub query_input: String,
+    pub query_result: QueryResult,
+    pub query_result_index: usize,
+    pub query_editing: bool,
+
     /// Should quit
     pub should_quit: bool,
 }
@@ -148,6 +157,12 @@ impl App {
             user_all_roles: Vec::new(),
             user_role_index: 0,
             user_team_index: 0,
+            query: QueryDefinition::default(),
+            query_field: QueryField::Entity,
+            query_input: String::new(),
+            query_result: QueryResult::default(),
+            query_result_index: 0,
+            query_editing: false,
             should_quit: false,
         }
     }
@@ -433,7 +448,7 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail => {}
+            View::SolutionDetail | View::Query => {}
         }
     }
 
@@ -501,7 +516,7 @@ impl App {
                 }
                 UserTab::Info => {}
             },
-            View::SolutionDetail => {}
+            View::SolutionDetail | View::Query => {}
         }
     }
 
@@ -610,4 +625,111 @@ impl App {
             _ => {}
         }
     }
+
+    /// Execute the current query
+    pub async fn execute_query(&mut self) {
+        if self.query.entity_set_name.is_empty() {
+            self.query_result.error = Some("Please select an entity first".to_string());
+            return;
+        }
+
+        self.state = AppState::Loading;
+        self.error = None;
+
+        let url = self.query.build_url();
+
+        match self.client.execute_query(&url).await {
+            Ok(json) => {
+                self.query_result = QueryResult::from_json(&json);
+                self.query_result.raw_json = Some(serde_json::to_string_pretty(&json).unwrap_or_default());
+                self.query_result_index = 0;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.query_result.error = Some(format!("Query failed: {}", e));
+                self.state = AppState::Ready;
+            }
+        }
+    }
+
+    /// Set the entity for the query from current selection
+    pub fn set_query_entity_from_selection(&mut self) {
+        if let Some(entity) = self.get_selected_entity().cloned() {
+            self.query.entity_name = entity.logical_name.clone();
+            self.query.entity_set_name = entity.entity_set_name.clone().unwrap_or_else(|| {
+                // Fallback: add 's' to logical name (not always correct but a guess)
+                format!("{}s", entity.logical_name)
+            });
+            self.query_input = entity.logical_name;
+        }
+    }
+
+    /// Apply the current query input to the appropriate field
+    pub fn apply_query_input(&mut self) {
+        match self.query_field {
+            QueryField::Entity => {
+                // Find entity by name
+                if let Some(entity) = self.entities.iter().find(|e| {
+                    e.logical_name.to_lowercase() == self.query_input.to_lowercase()
+                }) {
+                    self.query.entity_name = entity.logical_name.clone();
+                    self.query.entity_set_name = entity.entity_set_name.clone().unwrap_or_else(|| {
+                        format!("{}s", entity.logical_name)
+                    });
+                }
+            }
+            QueryField::Select => {
+                self.query.select = self.query_input
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+            QueryField::Filter => {
+                self.query.filter = self.query_input.clone();
+            }
+            QueryField::OrderBy => {
+                self.query.order_by = self.query_input.clone();
+            }
+            QueryField::Top => {
+                self.query.top = self.query_input.parse().ok();
+            }
+        }
+    }
+
+    /// Load the current field value into input for editing
+    pub fn load_query_field_to_input(&mut self) {
+        self.query_input = match self.query_field {
+            QueryField::Entity => self.query.entity_name.clone(),
+            QueryField::Select => self.query.select.join(", "),
+            QueryField::Filter => self.query.filter.clone(),
+            QueryField::OrderBy => self.query.order_by.clone(),
+            QueryField::Top => self.query.top.map(|n| n.to_string()).unwrap_or_default(),
+        };
+    }
+
+    /// Clear the query and results
+    pub fn clear_query(&mut self) {
+        self.query.clear();
+        self.query_input.clear();
+        self.query_result = QueryResult::default();
+        self.query_result_index = 0;
+    }
+
+    /// Navigate query results up
+    pub fn query_result_up(&mut self) {
+        if self.query_result_index > 0 {
+            self.query_result_index -= 1;
+        }
+    }
+
+    /// Navigate query results down
+    pub fn query_result_down(&mut self) {
+        if !self.query_result.rows.is_empty()
+            && self.query_result_index < self.query_result.rows.len() - 1
+        {
+            self.query_result_index += 1;
+        }
+    }
 }
+
