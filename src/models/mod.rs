@@ -6,7 +6,7 @@ mod odata;
 mod user;
 mod query;
 
-pub use entity::{AttributeMetadata, EntityMetadata, RelationshipMetadata, LocalizedLabel};
+pub use entity::{AttributeMetadata, EntityMetadata, RelationshipMetadata, OptionSetMetadata, OptionSetValue};
 pub use solution::{Solution, SolutionComponent, ComponentType};
 pub use odata::ODataResponse;
 pub use user::{SystemUser, Team, SecurityRole, RoleAssignment, RoleSource};

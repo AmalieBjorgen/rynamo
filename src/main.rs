@@ -185,6 +185,15 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             return;
         }
+        KeyCode::Char('4') => {
+            if app.view != View::OptionSets {
+                app.view = View::OptionSets;
+                if app.global_optionsets.is_empty() {
+                    app.load_global_optionsets().await;
+                }
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -348,6 +357,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Solutions => app.filter_solutions(),
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
+                View::OptionSets => app.filter_optionsets(),
                 _ => {}
             }
         }
@@ -361,6 +371,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::Solutions => app.filter_solutions(),
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
+                View::OptionSets => app.filter_optionsets(),
                 _ => {}
             }
         }

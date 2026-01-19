@@ -4,7 +4,7 @@ use crate::api::DataverseClient;
 use crate::models::{
     AttributeMetadata, EntityMetadata, QueryResult,
     RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SolutionComponent,
-    ComponentType, SystemUser, Team,
+    ComponentType, SystemUser, Team, OptionSetMetadata,
 };
 use super::input::{InputMode, KeyBindings};
 use std::sync::Arc;
@@ -20,6 +20,7 @@ pub enum View {
     Users,
     UserDetail,
     RecordDetail,
+    OptionSets,
 }
 
 /// Application state for the TUI
@@ -111,6 +112,12 @@ pub struct App {
     pub solution_components: Vec<SolutionComponent>,
     pub filtered_components: Vec<usize>,
     pub component_index: usize,
+
+    // OptionSet state
+    pub global_optionsets: Vec<OptionSetMetadata>,
+    pub filtered_optionsets: Vec<usize>,
+    pub optionset_index: usize,
+    pub selected_optionset: Option<OptionSetMetadata>,
 
     // User list state
     pub users: Vec<SystemUser>,
@@ -266,6 +273,10 @@ impl App {
             solution_components: Vec::new(),
             filtered_components: Vec::new(),
             component_index: 0,
+            global_optionsets: Vec::new(),
+            filtered_optionsets: Vec::new(),
+            optionset_index: 0,
+            selected_optionset: None,
             users: Vec::new(),
             filtered_users: Vec::new(),
             user_index: 0,
@@ -620,6 +631,11 @@ impl App {
                     self.record_detail_index -= 1;
                 }
             }
+            View::OptionSets => {
+                if self.optionset_index > 0 {
+                    self.optionset_index -= 1;
+                }
+            }
         }
     }
 
@@ -725,6 +741,13 @@ impl App {
                     && self.record_detail_index < self.query_result.columns.len() - 1
                 {
                     self.record_detail_index += 1;
+                }
+            }
+            View::OptionSets => {
+                if !self.filtered_optionsets.is_empty()
+                    && self.optionset_index < self.filtered_optionsets.len() - 1
+                {
+                    self.optionset_index += 1;
                 }
             }
         }
@@ -964,6 +987,44 @@ impl App {
                 .collect();
         }
         self.component_index = 0;
+    }
+
+    /// Load global option sets
+    pub async fn load_global_optionsets(&mut self) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        match self.client.get_global_option_sets().await {
+            Ok(optionsets) => {
+                self.global_optionsets = optionsets;
+                self.filter_optionsets();
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load global option sets: {}", e));
+                self.state = AppState::Error;
+            }
+        }
+    }
+
+    /// Filter global option sets
+    pub fn filter_optionsets(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered_optionsets = (0..self.global_optionsets.len()).collect();
+        } else {
+            self.filtered_optionsets = self
+                .global_optionsets
+                .iter()
+                .enumerate()
+                .filter(|(_, os)| {
+                    os.name.to_lowercase().contains(&query)
+                        || os.get_display_name().to_lowercase().contains(&query)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.optionset_index = 0;
     }
 
     /// Go back from detail view

@@ -35,11 +35,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]"];
+    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]"];
     let selected = match app.view {
         View::Entities | View::EntityDetail | View::RecordDetail => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
+        View::OptionSets => 3,
     };
 
     let tabs = Tabs::new(titles)
@@ -80,6 +81,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::Users => render_user_list(frame, app, area),
             View::UserDetail => render_user_detail(frame, app, area),
             View::RecordDetail => render_record_detail(frame, app, area),
+            View::OptionSets => render_optionset_browser(frame, app, area),
         },
     }
 }
@@ -1174,4 +1176,86 @@ fn render_record_detail(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut state = ListState::default();
     state.select(Some(app.record_detail_index));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Render global option set browser
+fn render_optionset_browser(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40), // OptionSet list
+            Constraint::Percentage(60), // Selected values
+        ])
+        .split(area);
+
+    // 1. OptionSet List
+    let items: Vec<ListItem> = app.filtered_optionsets
+        .iter()
+        .map(|&idx| {
+            let os = &app.global_optionsets[idx];
+            let name = os.get_display_name();
+            let sub = format!(" ({})", os.name);
+            ListItem::new(Line::from(vec![
+                Span::styled(name, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(sub, Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+
+    let title = format!(" Global Choices ({}) ", app.filtered_optionsets.len());
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    if !app.filtered_optionsets.is_empty() {
+        list_state.select(Some(app.optionset_index));
+    }
+    frame.render_stateful_widget(list, chunks[0], &mut list_state);
+
+    // 2. Selected OptionSet Values
+    let selected_idx = app.filtered_optionsets.get(app.optionset_index);
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Choice Values ");
+
+    if let Some(&idx) = selected_idx {
+        let os = &app.global_optionsets[idx];
+        if let Some(options) = &os.options {
+            let rows: Vec<Row> = options.iter()
+                .map(|opt| {
+                    Row::new(vec![
+                        opt.value.to_string(),
+                        opt.get_label(),
+                    ])
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [Constraint::Length(12), Constraint::Min(0)]
+            )
+            .header(
+                Row::new(vec!["Value", "Label"])
+                    .style(Style::default().add_modifier(Modifier::BOLD))
+                    .bottom_margin(1)
+            )
+            .block(detail_block);
+
+            frame.render_widget(table, chunks[1]);
+        } else {
+            let msg = Paragraph::new("\n  No values available/loaded for this choice set.")
+                .block(detail_block);
+            frame.render_widget(msg, chunks[1]);
+        }
+    } else {
+        let msg = Paragraph::new("\n  Select a choice set to view its values.")
+            .block(detail_block);
+        frame.render_widget(msg, chunks[1]);
+    }
 }

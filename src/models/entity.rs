@@ -234,3 +234,63 @@ impl RelationshipMetadata {
         None
     }
 }
+
+/// Global or local OptionSet metadata
+#[derive(Debug, Clone, Deserialize)]
+pub struct OptionSetMetadata {
+    #[serde(rename = "MetadataId")]
+    pub metadata_id: String,
+
+    #[serde(rename = "Name")]
+    pub name: String,
+
+    #[serde(rename = "DisplayName")]
+    pub display_name: Option<LocalizedLabel>,
+
+    #[serde(rename = "Description")]
+    pub description: Option<LocalizedLabel>,
+
+    #[serde(rename = "IsGlobal")]
+    pub is_global: Option<bool>,
+
+    #[serde(rename = "OptionSetType")]
+    pub option_set_type: Option<String>,
+
+    #[serde(rename = "Options")]
+    pub options: Option<Vec<OptionSetValue>>,
+}
+
+impl OptionSetMetadata {
+    pub fn get_display_name(&self) -> String {
+        self.display_name
+            .as_ref()
+            .map(|d| d.get_label())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.name.clone())
+    }
+}
+
+/// A value within an OptionSet
+#[derive(Debug, Clone, Deserialize)]
+pub struct OptionSetValue {
+    #[serde(rename = "Value")]
+    pub value: i32,
+
+    #[serde(rename = "Label")]
+    pub label: Option<LocalizedLabel>,
+
+    #[serde(rename = "Description")]
+    pub description: Option<LocalizedLabel>,
+
+    #[serde(rename = "Color")]
+    pub color: Option<String>,
+}
+
+impl OptionSetValue {
+    pub fn get_label(&self) -> String {
+        self.label
+            .as_ref()
+            .map(|l| l.get_label())
+            .unwrap_or_else(|| self.value.to_string())
+    }
+}

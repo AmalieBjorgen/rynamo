@@ -1,10 +1,27 @@
 //! Entity and attribute metadata API
 
 use super::DataverseClient;
-use crate::models::{AttributeMetadata, EntityMetadata, ODataResponse, RelationshipMetadata};
+use crate::models::{AttributeMetadata, EntityMetadata, ODataResponse, RelationshipMetadata, OptionSetMetadata};
 use anyhow::Result;
 
 impl DataverseClient {
+    /// Get all global option sets
+    pub async fn get_global_option_sets(&self) -> Result<Vec<OptionSetMetadata>> {
+        let response: ODataResponse<OptionSetMetadata> = self
+            .get_json("OptionSetDefinitions?$select=Name,DisplayName,Description,IsGlobal,OptionSetType,MetadataId")
+            .await?;
+        Ok(response.value)
+    }
+
+    /// Get the OptionSet for a specific attribute
+    pub async fn get_attribute_option_set(&self, entity_logical_name: &str, attribute_logical_name: &str) -> Result<OptionSetMetadata> {
+        let endpoint = format!(
+            "EntityDefinitions(LogicalName='{}')/Attributes(LogicalName='{}')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata/OptionSet?$select=Name,DisplayName,Description,IsGlobal,OptionSetType,MetadataId",
+            entity_logical_name, attribute_logical_name
+        );
+        self.get_json(&endpoint).await
+    }
+
     /// Get all entity definitions
     pub async fn get_entities(&self) -> Result<Vec<EntityMetadata>> {
         let response: ODataResponse<EntityMetadata> = self
