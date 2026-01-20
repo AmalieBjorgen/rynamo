@@ -4,5 +4,5 @@ pub mod components;
 mod app;
 mod input;
 
-pub use app::{App, AppState, View, UserTab, EntityTab, QueryMode, FilterOp};
+pub use app::{App, View, EntityTab, QueryMode};
 pub use input::{InputMode, KeyBindings};

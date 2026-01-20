@@ -139,8 +139,9 @@ async fn run_app(
                 }
 
                 match app.input_mode {
-                    InputMode::Normal => handle_normal_mode(app, key.code).await,
+                    InputMode::Normal => handle_normal_mode(app, key.code).await?,
                     InputMode::Search => handle_search_mode(app, key.code),
+                    InputMode::FetchXML => handle_fetchxml_mode(app, key.code).await?,
                 }
 
                 if app.should_quit {
@@ -154,7 +155,7 @@ async fn run_app(
 }
 
 /// Handle input in normal mode
-async fn handle_normal_mode(app: &mut App, key: KeyCode) {
+async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
     use crate::ui::EntityTab;
     
     // Global shortcuts
@@ -165,22 +166,22 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                 View::EntityDetail | View::SolutionDetail | View::UserDetail => app.go_back(),
                 _ => app.should_quit = true,
             }
-            return;
+            return Ok(());
         }
         KeyCode::Char('/') => {
             app.input_mode = InputMode::Search;
             app.search_query.clear();
-            return;
+            return Ok(());
         }
         KeyCode::Esc => {
             app.go_back();
-            return;
+            return Ok(());
         }
         KeyCode::Char('1') => {
             if app.view != View::Entities && app.view != View::EntityDetail {
                 app.view = View::Entities;
             }
-            return;
+            return Ok(());
         }
         KeyCode::Char('2') => {
             if app.view != View::Solutions && app.view != View::SolutionDetail {
@@ -189,7 +190,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_solutions().await;
                 }
             }
-            return;
+            return Ok(());
         }
         KeyCode::Char('3') => {
             if app.view != View::Users && app.view != View::UserDetail {
@@ -198,7 +199,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_users().await;
                 }
             }
-            return;
+            return Ok(());
         }
         KeyCode::Char('4') => {
             if app.view != View::OptionSets {
@@ -207,17 +208,55 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
                     app.load_global_optionsets().await;
                 }
             }
-            return;
+            return Ok(());
         }
         KeyCode::Char('g') => {
             app.input_mode = InputMode::Search;
             app.search_query.clear();
             app.view = View::GlobalSearch;
-            return;
+            return Ok(());
         }
         KeyCode::Char('E') => {
             app.view = View::Environments;
-            return;
+            return Ok(());
+        }
+        KeyCode::Char('D') => {
+            if app.view == View::Environments {
+                app.discover_environments().await?;
+            }
+            return Ok(());
+        }
+        KeyCode::Char('l') | KeyCode::Char('L') => {
+            match app.view {
+                View::Entities => {
+                    if let Some(entity) = app.get_selected_entity() {
+                        let metadata_id = entity.metadata_id.clone();
+                        app.load_solution_layers(&metadata_id, 1).await;
+                    }
+                }
+                View::EntityDetail => {
+                    if app.entity_tab == crate::ui::EntityTab::Attributes {
+                        if let Some(attr) = app.get_selected_attribute() {
+                            let metadata_id = attr.metadata_id.clone();
+                            app.load_solution_layers(&metadata_id, 2).await;
+                        }
+                    }
+                }
+                View::SolutionDetail => {
+                    if let Some(comp) = app.get_selected_component() {
+                        let type_code = comp.component_type.unwrap_or(0);
+                        let object_id = comp.object_id.as_deref().unwrap_or(&comp.solution_component_id).to_string();
+                        app.load_solution_layers(&object_id, type_code).await;
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            app.view = View::FetchXML;
+            app.input_mode = crate::ui::InputMode::FetchXML;
+            return Ok(());
         }
         _ => {}
     }
@@ -225,19 +264,19 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
     // Navigation
     if app.key_bindings.is_up(key) {
         app.navigate_up();
-        return;
+        return Ok(());
     }
     if app.key_bindings.is_down(key) {
         app.navigate_down();
-        return;
+        return Ok(());
     }
     if app.key_bindings.is_left(key) {
         app.prev_tab();
-        return;
+        return Ok(());
     }
     if app.key_bindings.is_right(key) {
         app.next_tab();
-        return;
+        return Ok(());
     }
 
     // Query tab specific keys
@@ -329,7 +368,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
             }
             _ => {}
         }
-        return;
+        return Ok(());
     }
 
     // Enter to select
@@ -384,6 +423,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) {
     if key == KeyCode::BackTab {
         app.prev_tab();
     }
+
+    Ok(())
 }
 
 /// Handle input in search mode
@@ -426,5 +467,41 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
         }
         _ => {}
     }
+}
+
+/// Handle input in FetchXML mode
+async fn handle_fetchxml_mode(app: &mut crate::ui::App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Enter => {
+            app.execute_fetch_xml_query().await;
+            app.input_mode = crate::ui::InputMode::Normal;
+        }
+        KeyCode::Char(c) => {
+            app.fetchxml_query.insert(app.fetchxml_cursor, c);
+            app.fetchxml_cursor += 1;
+        }
+        KeyCode::Backspace => {
+            if app.fetchxml_cursor > 0 {
+                app.fetchxml_query.remove(app.fetchxml_cursor - 1);
+                app.fetchxml_cursor -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.fetchxml_cursor > 0 {
+                app.fetchxml_cursor -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.fetchxml_cursor < app.fetchxml_query.len() {
+                app.fetchxml_cursor += 1;
+            }
+        }
+        KeyCode::Esc => {
+            app.input_mode = crate::ui::InputMode::Normal;
+            app.view = crate::ui::View::Entities; // Default back
+        }
+        _ => {}
+    }
+    Ok(())
 }
 

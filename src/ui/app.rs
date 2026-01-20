@@ -24,6 +24,8 @@ pub enum View {
     OptionSets,
     GlobalSearch,
     Environments,
+    SolutionLayers,
+    FetchXML,
 }
 
 /// Application state for the TUI
@@ -136,6 +138,14 @@ pub struct App {
     // Environment state
     pub config: crate::config::Config,
     pub environment_index: usize,
+
+    // Solution layers state
+    pub solution_layers: Vec<crate::models::SolutionComponentLayer>,
+    pub solution_layers_index: usize,
+
+    // FetchXML state
+    pub fetchxml_query: String,
+    pub fetchxml_cursor: usize,
 
     // User list state
     pub users: Vec<SystemUser>,
@@ -302,6 +312,10 @@ impl App {
             global_search_index: 0,
             config: crate::config::Config::default(),
             environment_index: 0,
+            solution_layers: Vec::new(),
+            solution_layers_index: 0,
+            fetchxml_query: String::new(),
+            fetchxml_cursor: 0,
             users: Vec::new(),
             filtered_users: Vec::new(),
             user_index: 0,
@@ -672,6 +686,12 @@ impl App {
                     self.environment_index -= 1;
                 }
             }
+            View::FetchXML => {}
+            View::SolutionLayers => {
+                if self.solution_layers_index > 0 {
+                    self.solution_layers_index -= 1;
+                }
+            }
         }
     }
 
@@ -800,6 +820,14 @@ impl App {
                     self.environment_index += 1;
                 }
             }
+            View::FetchXML => {}
+            View::SolutionLayers => {
+                if !self.solution_layers.is_empty()
+                    && self.solution_layers_index < self.solution_layers.len() - 1
+                {
+                    self.solution_layers_index += 1;
+                }
+            }
         }
     }
 
@@ -855,9 +883,17 @@ impl App {
 
     /// Get currently selected entity
     pub fn get_selected_entity(&self) -> Option<&EntityMetadata> {
-        self.filtered_entities
-            .get(self.entity_index)
-            .and_then(|&i| self.entities.get(i))
+        let idx = self.filtered_entities.get(self.entity_index)?;
+        self.entities.get(*idx)
+    }
+
+    pub fn get_selected_attribute(&self) -> Option<&crate::models::AttributeMetadata> {
+        let idx = self.filtered_attributes.get(self.attribute_index)?;
+        self.entity_attributes.get(*idx)
+    }
+
+    pub fn get_selected_component(&self) -> Option<&crate::models::SolutionComponent> {
+        self.solution_components.get(self.component_index)
     }
 
     /// Get currently selected solution
@@ -1170,6 +1206,18 @@ impl App {
                 self.view = View::EntityDetail;
                 self.selected_record_index = None;
             }
+            View::SolutionLayers => {
+                // Return to whatever made sense before.
+                // If we have a selected solution detail, go there.
+                // If we have an entity selected, go to entity detail.
+                if self.selected_solution.is_some() {
+                    self.view = View::SolutionDetail;
+                } else if self.selected_entity.is_some() {
+                    self.view = View::EntityDetail;
+                } else {
+                    self.view = View::Entities;
+                }
+            }
             _ => {}
         }
     }
@@ -1412,5 +1460,135 @@ impl App {
         self.config.add_environment(url.clone());
         let _ = self.config.save();
         self.switch_environment(&url).await
+    }
+
+    /// Discover and add all available environments
+    pub async fn discover_environments(&mut self) -> anyhow::Result<()> {
+        self.state = AppState::Loading;
+        self.message = Some("Discovering environments...".to_string());
+        
+        match self.client.discover_environments().await {
+            Ok(instances) => {
+                let mut added_count = 0;
+                for instance in instances {
+                    let url = instance.url.trim_end_matches('/').to_string();
+                    if !self.config.environments.contains(&url) {
+                        self.config.environments.push(url);
+                        added_count += 1;
+                    }
+                }
+                
+                let _ = self.config.save();
+                self.message = Some(format!("Discovered {} new environments", added_count));
+                self.state = AppState::Ready;
+                Ok(())
+            }
+            Err(e) => {
+                self.error = Some(format!("Discovery failed: {}", e));
+                self.state = AppState::Ready;
+                Err(e)
+            }
+        }
+    }
+
+    /// Load solution layers for the current component
+    pub async fn load_solution_layers(&mut self, component_id: &str, component_type: i32) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        match self.client.get_solution_layers(component_id, component_type).await {
+            Ok(layers) => {
+                self.solution_layers = layers;
+                self.solution_layers_index = 0;
+                self.view = View::SolutionLayers;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load solution layers: {}", e));
+                self.state = AppState::Ready;
+            }
+        }
+    }
+
+    /// Execute the FetchXML query currently in the input
+    pub async fn execute_fetch_xml_query(&mut self) {
+        if self.fetchxml_query.is_empty() {
+            return;
+        }
+
+        self.state = AppState::Loading;
+        self.error = None;
+
+        // Extract entity name from FetchXML (simple heuristic)
+        let entity_name = if let Some(start) = self.fetchxml_query.find("<entity name=\"") {
+            let rest = &self.fetchxml_query[start + 14..];
+            if let Some(end) = rest.find("\"") {
+                Some(&rest[..end])
+            } else {
+                None
+            }
+        } else if let Some(start) = self.fetchxml_query.find("<entity name='") {
+            let rest = &self.fetchxml_query[start + 14..];
+            if let Some(end) = rest.find("'") {
+                Some(&rest[..end])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let Some(logical_name) = entity_name else {
+            self.error = Some("Could not find <entity name='...'> in FetchXML".to_string());
+            self.state = AppState::Ready;
+            return;
+        };
+
+        // We need the entity set name. If we don't have it, we might need to fetch it or guess it.
+        // For now, let's try to find it from our cached entities.
+        let entity_set_name = self.entities.iter()
+            .find(|e| e.logical_name == logical_name)
+            .and_then(|e| e.entity_set_name.clone())
+            .unwrap_or_else(|| format!("{}s", logical_name));
+
+        match self.client.execute_fetch_xml(&entity_set_name, &self.fetchxml_query).await {
+            Ok(result) => {
+                self.query_result = result;
+                self.view = View::EntityDetail;
+                self.entity_tab = EntityTab::Query;
+                self.query_mode = QueryMode::Results;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("FetchXML execution failed: {}", e));
+                self.state = AppState::Ready;
+            }
+        }
+    }
+
+    /// Show usage statistics for the selected attribute
+    pub async fn show_attribute_usage(&mut self) {
+        let Some(entity) = &self.selected_entity else { return; };
+        
+        let (logical_name, _metadata_id) = if let Some(attr) = self.get_selected_attribute() {
+            (attr.logical_name.clone(), attr.metadata_id.clone())
+        } else {
+            return;
+        };
+        
+        let entity_set_name = entity.entity_set_name.clone().unwrap_or_else(|| {
+            format!("{}s", entity.logical_name)
+        });
+        
+        self.message = Some(format!("Calculating usage for {}...", logical_name));
+        
+        match self.client.get_attribute_count(&entity_set_name, &logical_name).await {
+            Ok(count) => {
+                self.message = Some(format!("Attribute '{}' is populated in {} records", logical_name, count));
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to calculate usage: {}", e));
+            }
+        }
     }
 }

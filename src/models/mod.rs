@@ -6,8 +6,11 @@ mod odata;
 mod user;
 mod query;
 
-pub use entity::{AttributeMetadata, EntityMetadata, RelationshipMetadata, OptionSetMetadata, OptionSetValue};
-pub use solution::{Solution, SolutionComponent, ComponentType};
+pub use entity::{AttributeMetadata, EntityMetadata, RelationshipMetadata, OptionSetMetadata};
+pub use solution::{Solution, SolutionComponent, ComponentType, SolutionComponentLayer};
 pub use odata::ODataResponse;
 pub use user::{SystemUser, Team, SecurityRole, RoleAssignment, RoleSource};
-pub use query::{QueryDefinition, QueryResult, QueryField};
+pub mod discovery;
+
+pub use discovery::{DiscoveryInstance, DiscoveryResponse};
+pub use query::QueryResult;

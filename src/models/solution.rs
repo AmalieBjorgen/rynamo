@@ -55,6 +55,31 @@ pub struct SolutionComponent {
     pub root_component_behavior: Option<i32>,
 }
 
+/// Solution component layer
+#[derive(Debug, Clone, Deserialize)]
+pub struct SolutionComponentLayer {
+    #[serde(rename = "msdyn_name")]
+    pub name: String,
+    
+    #[serde(rename = "msdyn_solutionname")]
+    pub solution_name: String,
+    
+    #[serde(rename = "msdyn_solutionid")]
+    pub solution_id: String,
+    
+    #[serde(rename = "msdyn_order")]
+    pub order: i32,
+    
+    #[serde(rename = "msdyn_ismanaged")]
+    pub is_managed: bool,
+    
+    #[serde(rename = "msdyn_componentid")]
+    pub component_id: String,
+    
+    #[serde(rename = "msdyn_componenttype")]
+    pub component_type: i32,
+}
+
 impl SolutionComponent {
     /// Get the component type as an enum
     pub fn get_component_type(&self) -> ComponentType {

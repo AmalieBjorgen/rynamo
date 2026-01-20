@@ -1,16 +1,13 @@
 //! UI rendering components
 
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Tabs, Wrap},
-    Frame,
-};
+use ratatui::prelude::{Constraint, Direction, Layout, Rect, Line, Span, Modifier, Position};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Tabs, Wrap};
+use ratatui::Frame;
 
 use super::app::{App, AppState, EntityTab, QueryMode, SearchResult, UserTab, View};
 use super::input::InputMode;
-use crate::models::{ComponentType, RoleSource, SolutionComponent};
+use crate::models::{ComponentType, RoleSource};
 
 /// Render the complete UI
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -43,6 +40,8 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         View::OptionSets => 3,
         View::GlobalSearch => 4,
         View::Environments => 5,
+        View::SolutionLayers => 0,
+        View::FetchXML => 0,
     };
 
     let tabs = Tabs::new(titles)
@@ -86,6 +85,8 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::OptionSets => render_optionset_browser(frame, app, area),
             View::GlobalSearch => render_global_search(frame, app, area),
             View::Environments => render_environment_switcher(frame, app, area),
+            View::SolutionLayers => render_solution_layers(frame, app, area),
+            View::FetchXML => render_fetchxml_console(frame, app, area),
         },
     }
 }
@@ -1184,9 +1185,48 @@ fn render_record_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol("▶ ");
 
-    let mut state = ListState::default();
-    state.select(Some(app.record_detail_index));
-    frame.render_stateful_widget(list, area, &mut state);
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.record_detail_index));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render solution layers for a component
+fn render_solution_layers(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = app.solution_layers
+        .iter()
+        .map(|layer| {
+            let style = if layer.is_managed {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            };
+            
+            let managed_tag = if layer.is_managed { "[Managed]" } else { "[Unmanaged]" };
+            
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<2} ", layer.order), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:<12} ", managed_tag), style),
+                Span::styled(&layer.solution_name, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(format!(" ({})", layer.name), Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+
+    let title = " Solution Layers (Top to Bottom) - Esc: Back ";
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 80))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut list_state = ListState::default();
+    if !app.solution_layers.is_empty() {
+        list_state.select(Some(app.solution_layers_index));
+    }
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Render global option set browser
@@ -1357,4 +1397,36 @@ fn render_environment_switcher(frame: &mut Frame, app: &mut App, area: Rect) {
         list_state.select(Some(app.environment_index));
     }
     frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render FetchXML Console
+fn render_fetchxml_console(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10), // Input area
+            Constraint::Length(3), // Help area
+        ])
+        .split(area);
+
+    let input = Paragraph::new(app.fetchxml_query.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" FetchXML Console ")
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+    
+    frame.render_widget(input, chunks[0]);
+    
+    // Set cursor position
+    frame.set_cursor_position(Position::new(
+        chunks[0].x + 1 + app.fetchxml_cursor as u16,
+        chunks[0].y + 1,
+    ));
+
+    let help = Paragraph::new(" Enter: Execute │ Esc: Back │ Ctrl+V: Paste ")
+        .block(Block::default().borders(Borders::ALL));
+    
+    frame.render_widget(help, chunks[1]);
 }

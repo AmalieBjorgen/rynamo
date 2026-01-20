@@ -1,6 +1,6 @@
 //! Query builder models and structures
 
-use serde::{Deserialize, Serialize};
+
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
@@ -157,7 +157,7 @@ impl QueryResult {
                         }
                     } else if col.starts_with('_') && col.ends_with("_value") {
                         // Dataverse often returns lookups as _name_value
-                        let base_name = &col[1..col.len() - 6];
+                        let _base_name = &col[1..col.len() - 6];
                         let logical_key = format!("{}@Microsoft.Dynamics.CRM.lookuplogicalname", col);
                         if let Some(JsonValue::String(logical_name)) = obj.get(&logical_key) {
                              if let Some(JsonValue::String(id)) = obj.get(col) {

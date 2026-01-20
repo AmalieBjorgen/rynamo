@@ -25,6 +25,8 @@ pub enum InputMode {
     Normal,
     /// Search/filter input mode
     Search,
+    /// FetchXML console input mode
+    FetchXML,
 }
 
 impl KeyBindings {

@@ -32,12 +32,19 @@ impl AzureAuthenticator {
     /// Get an access token for the Dataverse API
     pub async fn get_token(&self) -> Result<String> {
         let scope = format!("{}/.default", self.environment_url);
-        
+        self.get_token_for_scope(&scope).await
+    }
+
+    /// Get an access token for a specific scope
+    pub async fn get_token_for_scope(&self, scope: &str) -> Result<String> {
         let token = self
             .credential
-            .get_token(&[&scope])
+            .get_token(&[scope])
             .await
-            .context("Failed to get token from Azure CLI. Make sure you're logged in with 'az login'")?;
+            .context(format!(
+                "Failed to get token for scope '{}' from Azure CLI. Make sure you're logged in with 'az login'",
+                scope
+            ))?;
 
         Ok(token.token.secret().to_string())
     }
