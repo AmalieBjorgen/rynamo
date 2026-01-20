@@ -84,7 +84,7 @@ impl DataverseClient {
     }
 
     /// Get the environment URL
-    pub fn environment_url(&self) -> &str {
+    pub fn environment_url(&self) -> String {
         self.authenticator.environment_url()
     }
 

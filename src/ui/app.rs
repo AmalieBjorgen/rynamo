@@ -291,10 +291,19 @@ pub struct FilterCondition {
 impl App {
     /// Create a new app instance
     pub fn new(client: Arc<DataverseClient>, key_bindings: KeyBindings) -> Self {
+        let config = crate::config::Config::load().unwrap_or_default();
+        let (view, state) = if config.current_env.is_some() {
+            (View::Entities, AppState::Loading)
+        } else if !config.environments.is_empty() {
+            (View::Environments, AppState::Ready)
+        } else {
+            (View::EnvironmentDiscovery, AppState::Ready)
+        };
+
         Self {
             client,
-            state: AppState::Loading,
-            view: View::Entities,
+            state,
+            view,
             error: None,
             key_bindings,
             input_mode: InputMode::Normal,

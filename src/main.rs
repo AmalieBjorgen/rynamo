@@ -27,7 +27,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::api::DataverseClient;
 use crate::auth::AzureAuthenticator;
-use crate::ui::{App, InputMode, KeyBindings, View};
+use crate::ui::{App, AppState, InputMode, KeyBindings, View};
 
 /// Rynamo - Dataverse TUI Explorer
 #[derive(Parser, Debug)]
@@ -37,7 +37,7 @@ use crate::ui::{App, InputMode, KeyBindings, View};
 struct Args {
     /// Dataverse environment URL (e.g., https://yourorg.crm.dynamics.com)
     #[arg(short, long, env = "DATAVERSE_URL")]
-    env: String,
+    env: Option<String>,
 
     /// Use vim-style keybindings (j/k navigation)
     #[arg(long, default_value = "false")]
@@ -56,25 +56,38 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let mut config = config::Config::load().unwrap_or_default();
-    if !config.environments.contains(&args.env) {
-        config.add_environment(args.env.clone());
-        let _ = config.save();
-    }
+    
+    // Determine the environment to start with
+    let start_env = match args.env {
+        Some(env) => {
+            if !config.environments.contains(&env) {
+                config.add_environment(env.clone());
+                let _ = config.save();
+            }
+            Some(env)
+        }
+        None => config.current_env.clone(),
+    };
 
-    // Set up authentication
+    // Set up authentication - use a dummy for discovery if no env is provided
+    let auth_url = start_env.as_deref().unwrap_or("https://common.crm.dynamics.com");
     let authenticator = Arc::new(
-        AzureAuthenticator::new(&args.env)
+        AzureAuthenticator::new(auth_url)
             .await
             .context("Failed to create Azure authenticator")?,
     );
 
-    // Test connection before starting TUI
-    eprintln!("Connecting to {}...", args.env);
-    authenticator
-        .test_connection()
-        .await
-        .context("Failed to authenticate. Make sure you're logged in with 'az login'")?;
-    eprintln!("Connected successfully!");
+    // If we have an environment, test the connection
+    if let Some(env) = &start_env {
+        eprintln!("Connecting to {}...", env);
+        if let Err(e) = authenticator.test_connection().await {
+             eprintln!("Warning: Failed to connect to {}: {}", env, e);
+        } else {
+             eprintln!("Connected successfully!");
+        }
+    } else {
+        eprintln!("No environment specified. Starting in discovery mode...");
+    }
 
     // Create API client
     let client = Arc::new(DataverseClient::new(authenticator));
@@ -119,8 +132,10 @@ async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<()> {
-    // Load initial data
-    app.load_entities().await;
+    // Initial data load if we have an environment
+    if app.view == View::Entities && app.state == AppState::Loading {
+        app.load_entities().await;
+    }
 
     loop {
         // Render

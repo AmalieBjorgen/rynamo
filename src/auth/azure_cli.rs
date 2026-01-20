@@ -3,12 +3,12 @@
 use anyhow::{Context, Result};
 use azure_core::credentials::TokenCredential;
 use azure_identity::AzureCliCredential;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Authenticator that uses Azure CLI credentials to access Dataverse
 pub struct AzureAuthenticator {
     credential: Arc<AzureCliCredential>,
-    environment_url: String,
+    environment_url: RwLock<String>,
 }
 
 impl AzureAuthenticator {
@@ -25,13 +25,14 @@ impl AzureAuthenticator {
 
         Ok(Self {
             credential,
-            environment_url,
+            environment_url: RwLock::new(environment_url),
         })
     }
 
     /// Get an access token for the Dataverse API
     pub async fn get_token(&self) -> Result<String> {
-        let scope = format!("{}/.default", self.environment_url);
+        let env_url = self.environment_url.read().unwrap();
+        let scope = format!("{}/.default", *env_url);
         self.get_token_for_scope(&scope).await
     }
 
@@ -50,8 +51,15 @@ impl AzureAuthenticator {
     }
 
     /// Get the environment URL
-    pub fn environment_url(&self) -> &str {
-        &self.environment_url
+    pub fn environment_url(&self) -> String {
+        self.environment_url.read().unwrap().clone()
+    }
+
+    /// Set the environment URL
+    pub fn set_environment_url(&self, url: impl Into<String>) {
+        let mut env_url = self.environment_url.write().unwrap();
+        let url = url.into().trim_end_matches('/').to_string();
+        *env_url = url;
     }
 
     /// Test if authentication is working
