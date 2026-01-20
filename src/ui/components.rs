@@ -1478,7 +1478,7 @@ fn render_system_job_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(search, chunks[0]);
 
     // Job List
-    let items: Vec<ListItem> = app
+    let rows: Vec<Row> = app
         .filtered_system_jobs
         .iter()
         .map(|&i| {
@@ -1491,31 +1491,48 @@ fn render_system_job_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 _ => Style::default().fg(Color::Yellow), // Waiting
             };
 
-            let line = Line::from(vec![
-                Span::styled(format!("{:<30}", job.get_name()), Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{:<15}", status), style),
-                Span::raw(format!("Started: {}", job.started_on.as_deref().unwrap_or("-"))),
-            ]);
-            
-            ListItem::new(line)
+            Row::new(vec![
+                Span::styled(job.get_name(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(status, style),
+                Span::raw(job.started_on.as_deref().unwrap_or("-")),
+            ])
         })
         .collect();
 
-    let list = List::new(items)
+    let widths = [
+        Constraint::Percentage(50),
+        Constraint::Length(15),
+        Constraint::Length(25),
+    ];
+
+    let table = Table::new(rows, widths)
         .block(Block::default().borders(Borders::ALL).title("System Jobs"))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("> ");
+        .header(
+            Row::new(vec!["Name", "Status", "Started On"])
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .bottom_margin(1)
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(app.system_job_index));
-    frame.render_stateful_widget(list, chunks[1], &mut state);
+    frame.render_stateful_widget(table, chunks[1], &mut state);
 
-    // Filter status
-    let filter_status = format!(
-        "Showing {} of {} jobs",
-        app.filtered_system_jobs.len(),
-        app.system_jobs.len()
-    );
+    // Filter and Pagination status
+    let filter_status = if app.system_jobs_next_link.is_some() {
+        format!(
+            "Showing {} of {} jobs (Scroll down for more)",
+            app.filtered_system_jobs.len(),
+            app.system_jobs.len()
+        )
+    } else {
+        format!(
+            "Showing {} of {} jobs",
+            app.filtered_system_jobs.len(),
+            app.system_jobs.len()
+        )
+    };
+    
     let status_bar = Paragraph::new(filter_status)
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(status_bar, chunks[2]);

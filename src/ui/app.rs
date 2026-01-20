@@ -169,6 +169,8 @@ pub struct App {
     pub filtered_system_jobs: Vec<usize>,
     pub system_job_index: usize,
     pub selected_system_job: Option<SystemJob>,
+    pub system_jobs_next_link: Option<String>,
+    pub should_load_more_jobs: bool,
 
     // Guided Query builder state (integrated in Entity Detail)
     pub query_mode: QueryMode,
@@ -358,6 +360,8 @@ impl App {
             filtered_system_jobs: Vec::new(),
             system_job_index: 0,
             selected_system_job: None,
+            system_jobs_next_link: None,
+            should_load_more_jobs: false,
         }
     }
 
@@ -474,14 +478,44 @@ impl App {
         self.error = None;
 
         match self.client.get_system_jobs(50).await { // Default to top 50
-            Ok(jobs) => {
+            Ok((jobs, next_link)) => {
                 self.filtered_system_jobs = (0..jobs.len()).collect();
                 self.system_jobs = jobs;
+                self.system_jobs_next_link = next_link;
                 self.state = AppState::Ready;
             }
             Err(e) => {
                 self.error = Some(format!("Failed to load system jobs: {}", e));
                 self.state = AppState::Error;
+            }
+        }
+    }
+    
+    /// Load more system jobs (next page)
+    pub async fn load_more_system_jobs(&mut self) {
+        let next_link = match &self.system_jobs_next_link {
+            Some(link) => link.clone(),
+            None => return,
+        };
+        
+        // Don't set loading state to avoid flickering, just append
+        match self.client.get_next_page_system_jobs(&next_link).await {
+            Ok((mut new_jobs, new_next_link)) => {
+                let start_index = self.system_jobs.len();
+                self.system_jobs.append(&mut new_jobs);
+                
+                // Append to filtered list if no filter is active. 
+                // If filter IS active, we should re-filter everything or just append if they match? 
+                // For simplicity, re-filter.
+                self.filter_system_jobs();
+                
+                self.system_jobs_next_link = new_next_link;
+            }
+            Err(e) => {
+                 self.error = Some(format!("Failed to load more jobs: {}", e));
+                 // Don't change state to Error, just show message?
+                 // For now, simple error handling
+                 self.message = Some(format!("Error loading more: {}", e));
             }
         }
     }
@@ -854,6 +888,13 @@ impl App {
                     && self.system_job_index < self.filtered_system_jobs.len() - 1
                 {
                     self.system_job_index += 1;
+                    
+                    // Trigger load more if near end
+                    if self.system_job_index >= self.filtered_system_jobs.len() - 5 
+                       && self.system_jobs_next_link.is_some() 
+                       && self.search_query.is_empty() { // Only load more if not filtering locally
+                        self.should_load_more_jobs = true;
+                    }
                 }
             }
             View::SystemJobDetail => {}

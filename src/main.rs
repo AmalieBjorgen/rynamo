@@ -127,6 +127,11 @@ async fn run_app(
         terminal.draw(|f| ui::components::render(f, app))?;
 
         // Handle events with timeout
+        if app.should_load_more_jobs {
+            app.should_load_more_jobs = false;
+            app.load_more_system_jobs().await;
+        }
+
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
