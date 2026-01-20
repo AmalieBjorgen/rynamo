@@ -27,6 +27,8 @@ pub enum InputMode {
     Search,
     /// FetchXML console input mode
     FetchXML,
+    /// SQL console input mode
+    SQLQuery,
 }
 
 impl KeyBindings {

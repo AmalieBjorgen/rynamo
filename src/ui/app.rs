@@ -58,6 +58,7 @@ pub enum QueryMode {
     Filter,     // Build filter conditions
     OrderBy,    // Select order by column
     Options,    // Top, skip options
+    Sql,        // SQL console mode
     Results,    // View results
 }
 
@@ -191,6 +192,10 @@ pub struct App {
     pub query_result: QueryResult,
     pub query_result_index: usize,
     pub query_editing: bool,                // Editing filter value
+
+    // SQL Console state
+    pub sql_query: String,
+    pub sql_cursor: usize,
 
     // Record detail state
     pub selected_record_index: Option<usize>,
@@ -378,6 +383,9 @@ impl App {
             selected_system_job: None,
             system_jobs_next_link: None,
             should_load_more_jobs: false,
+
+            sql_query: String::new(),
+            sql_cursor: 0,
         }
     }
 
@@ -1463,6 +1471,125 @@ impl App {
                 self.query_result.error = Some(format!("Query failed: {}", e));
                 self.state = AppState::Ready;
             }
+        }
+    }
+
+    /// Execute SQL query from the console
+    pub async fn execute_sql_query(&mut self) {
+        if self.sql_query.trim().is_empty() {
+             self.error = Some("Empty query".to_string());
+             return;
+        }
+
+        self.state = AppState::Loading;
+        self.error = None;
+        self.message = Some("Executing SQL query...".to_string());
+
+        let odata_query = match self.translate_sql_to_odata(&self.sql_query) {
+            Ok(query) => query,
+            Err(e) => {
+                self.error = Some(format!("SQL Error: {}", e));
+                self.state = AppState::Ready;
+                return;
+            }
+        };
+
+        match self.client.execute_query(&odata_query).await {
+            Ok(json) => {
+                self.query_result = QueryResult::from_json(&json);
+                self.query_result.raw_json = Some(serde_json::to_string_pretty(&json).unwrap_or_default());
+                self.query_result_index = 0;
+                self.query_mode = QueryMode::Results;
+                self.state = AppState::Ready;
+                self.message = None;
+            }
+            Err(e) => {
+                self.query_result.error = Some(format!("Query failed: {}", e));
+                self.state = AppState::Ready;
+                self.message = None;
+            }
+        }
+    }
+
+    /// Basic SQL to OData translator
+    fn translate_sql_to_odata(&self, sql: &str) -> anyhow::Result<String> {
+        let sql = sql.trim();
+        let tokens: Vec<&str> = sql.split_whitespace().collect();
+        
+        if tokens.len() < 4 || tokens[0].to_lowercase() != "select" {
+            return Err(anyhow::anyhow!("Invalid SQL. Must start with SELECT."));
+        }
+
+        // Extremely basic parser for: SELECT [cols] FROM [entity] WHERE [filter]
+        let mut i = 1;
+        let mut select_cols = Vec::new();
+        
+        // Parse SELECT columns
+        while i < tokens.len() && tokens[i].to_lowercase() != "from" {
+            let col = tokens[i].trim_matches(',');
+            if !col.is_empty() {
+                select_cols.push(col.to_string());
+            }
+            i += 1;
+        }
+
+        if i >= tokens.len() || tokens[i].to_lowercase() != "from" {
+            return Err(anyhow::anyhow!("Missing FROM clause"));
+        }
+        i += 1;
+
+        if i >= tokens.len() {
+            return Err(anyhow::anyhow!("Missing entity name after FROM"));
+        }
+        
+        let entity_name = tokens[i];
+        let entity_name_lower = entity_name.to_lowercase();
+        i += 1;
+
+        // Try to find entity set name if it's the logical name
+        let entity_set = self.entities.iter()
+            .find(|e| e.logical_name == entity_name_lower || e.get_display_name().to_lowercase() == entity_name_lower)
+            .and_then(|e| e.entity_set_name.clone())
+            .unwrap_or_else(|| {
+                // Heuristic: append 's'
+                format!("{}s", entity_name_lower)
+            });
+
+        let mut parts = Vec::new();
+        
+        // Handle SELECT *
+        if select_cols.len() == 1 && select_cols[0] == "*" {
+            // Include nothing in $select to get all
+        } else if !select_cols.is_empty() {
+            parts.push(format!("$select={}", select_cols.join(",")));
+        }
+
+        // Parse WHERE
+        if i < tokens.len() && tokens[i].to_lowercase() == "where" {
+            i += 1;
+            let filter_content = tokens[i..].join(" ");
+            
+            // Translate common SQL operators to OData
+            let filter = filter_content
+                .replace(" = ", " eq ")
+                .replace(" != ", " ne ")
+                .replace(" <> ", " ne ")
+                .replace(" > ", " gt ")
+                .replace(" >= ", " ge ")
+                .replace(" < ", " lt ")
+                .replace(" <= ", " le ")
+                .replace(" LIKE ", " contains ") // Simple approximation
+                .replace(" AND ", " and ")
+                .replace(" OR ", " or ")
+                .replace(" NOT ", " not ");
+                
+            parts.push(format!("$filter={}", filter));
+        }
+
+        if parts.is_empty() {
+            Ok(entity_set)
+        } else {
+            Ok(format!("{}?{}", entity_set, parts.join("&")))
         }
     }
 

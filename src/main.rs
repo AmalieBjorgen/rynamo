@@ -162,6 +162,7 @@ async fn run_app(
                     InputMode::Normal => handle_normal_mode(app, key.code).await?,
                     InputMode::Search => handle_search_mode(app, key.code).await?,
                     InputMode::FetchXML => handle_fetchxml_mode(app, key.code).await?,
+                    InputMode::SQLQuery => handle_sql_query_mode(app, key.code).await?,
                 }
 
                 if app.should_quit {
@@ -319,11 +320,19 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
                         app.query_mode = crate::ui::QueryMode::Filter;
                     }
                     crate::ui::QueryMode::Filter => {
-                        // Add current filter
-                        app.add_filter();
+                        if app.query_filter_attr.is_none() {
+                             // Pick current column if none selected
+                             app.query_filter_attr = Some(app.query_column_index);
+                        } else {
+                            // Add current filter
+                            app.add_filter();
+                        }
                     }
                     crate::ui::QueryMode::Results => {
                         app.enter_record_detail();
+                    }
+                    crate::ui::QueryMode::Sql => {
+                        app.input_mode = crate::ui::InputMode::SQLQuery;
                     }
                     _ => {
                         // Execute query in other modes
@@ -383,10 +392,19 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
                 app.query_mode = match app.query_mode {
                     crate::ui::QueryMode::Columns => crate::ui::QueryMode::Filter,
                     crate::ui::QueryMode::Filter => crate::ui::QueryMode::Options,
-                    crate::ui::QueryMode::Options => crate::ui::QueryMode::Results,
+                    crate::ui::QueryMode::Options => crate::ui::QueryMode::Sql,
+                    crate::ui::QueryMode::Sql => {
+                        app.input_mode = crate::ui::InputMode::Normal;
+                        crate::ui::QueryMode::Results
+                    },
                     crate::ui::QueryMode::OrderBy => crate::ui::QueryMode::Results,
                     crate::ui::QueryMode::Results => crate::ui::QueryMode::Columns,
                 };
+                
+                // Automatically enter SQL input mode if we switch to SQL tab
+                if app.query_mode == crate::ui::QueryMode::Sql {
+                    app.input_mode = crate::ui::InputMode::SQLQuery;
+                }
             }
             KeyCode::Esc => {
                 if app.query_mode == crate::ui::QueryMode::Filter && app.query_filter_attr.is_some() {
@@ -567,3 +585,37 @@ async fn handle_fetchxml_mode(app: &mut crate::ui::App, key: KeyCode) -> Result<
     Ok(())
 }
 
+/// Handle input in SQL query mode
+async fn handle_sql_query_mode(app: &mut crate::ui::App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Enter => {
+            app.execute_sql_query().await;
+            app.input_mode = crate::ui::InputMode::Normal;
+        }
+        KeyCode::Char(c) => {
+            app.sql_query.insert(app.sql_cursor, c);
+            app.sql_cursor += 1;
+        }
+        KeyCode::Backspace => {
+            if app.sql_cursor > 0 {
+                app.sql_query.remove(app.sql_cursor - 1);
+                app.sql_cursor -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.sql_cursor > 0 {
+                app.sql_cursor -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.sql_cursor < app.sql_query.len() {
+                app.sql_cursor += 1;
+            }
+        }
+        KeyCode::Esc | KeyCode::Tab => {
+            app.input_mode = crate::ui::InputMode::Normal;
+        }
+        _ => {}
+    }
+    Ok(())
+}

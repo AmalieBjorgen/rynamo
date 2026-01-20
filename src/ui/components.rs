@@ -1,6 +1,6 @@
 //! UI rendering components
 
-use ratatui::prelude::{Constraint, Direction, Layout, Rect, Line, Span, Modifier, Position};
+use ratatui::prelude::{Alignment, Constraint, Direction, Layout, Rect, Line, Span, Modifier, Position};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Tabs, Wrap};
 use ratatui::Frame;
@@ -929,12 +929,13 @@ fn render_query_builder(frame: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Mode tabs
-    let mode_titles = vec!["Columns", "Filters", "Options", "Results"];
+    let mode_titles = vec!["Columns", "Filters", "Options", "SQL", "Results"];
     let selected_mode = match app.query_mode {
         QueryMode::Columns => 0,
         QueryMode::Filter => 1,
         QueryMode::OrderBy | QueryMode::Options => 2,
-        QueryMode::Results => 3,
+        QueryMode::Sql => 3,
+        QueryMode::Results => 4,
     };
 
     let mode_tabs = Tabs::new(mode_titles)
@@ -949,6 +950,7 @@ fn render_query_builder(frame: &mut Frame, app: &App, area: Rect) {
         QueryMode::Columns => render_column_selector(frame, app, chunks[1]),
         QueryMode::Filter => render_filter_builder(frame, app, chunks[1]),
         QueryMode::OrderBy | QueryMode::Options => render_query_options(frame, app, chunks[1]),
+        QueryMode::Sql => render_sql_console(frame, app, chunks[1]),
         QueryMode::Results => {
             // In results mode, show selected columns as a reference on the left
             render_column_selector(frame, app, chunks[1]);
@@ -960,6 +962,7 @@ fn render_query_builder(frame: &mut Frame, app: &App, area: Rect) {
         QueryMode::Columns => "Tab: Next │ Enter: Filter by │ Space: Toggle │ a: All │ c: Clear │ F5: Run",
         QueryMode::Filter => "Tab: Next │ Enter: Add │ d: Delete │ o/O: Op │ Backspace: Pop │ F5: Run",
         QueryMode::Options | QueryMode::OrderBy => "Tab: Next │ Enter: Edit │ F5: Run",
+        QueryMode::Sql => "Tab: Next │ Enter: Execute │ SQL Query Console",
         QueryMode::Results => "Tab: Next │ n: Next Page │ ↑/↓: Scroll │ Esc: Back │ F5: Run again",
     };
     let help_para = Paragraph::new(help)
@@ -1083,6 +1086,41 @@ fn render_query_options(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title(" Options "));
     frame.render_widget(paragraph, area);
+}
+
+/// Render SQL Console
+fn render_sql_console(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Min(0),    // Editor
+            Constraint::Length(3), // Info
+        ])
+        .split(area);
+
+    let title = Paragraph::new(" SQL Query Console ")
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)))
+        .alignment(Alignment::Center);
+    frame.render_widget(title, chunks[0]);
+
+    let input = Paragraph::new(app.sql_query.as_str())
+        .block(Block::default().borders(Borders::ALL).title(" SELECT ... FROM ... WHERE ... "))
+        .style(Style::default().fg(Color::Yellow));
+    frame.render_widget(input, chunks[1]);
+
+    // Rough cursor simulation
+    if app.input_mode == crate::ui::InputMode::SQLQuery {
+        let cursor_x = chunks[1].x + 1 + (app.sql_cursor % (chunks[1].width as usize - 2)) as u16;
+        let cursor_y = chunks[1].y + 1 + (app.sql_cursor / (chunks[1].width as usize - 2)) as u16;
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
+
+    let info = Paragraph::new(" Enter: Execute │ Esc: Back │ Tab: Switch Mode │ SQL -> OData translation ")
+        .block(Block::default().borders(Borders::ALL))
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(info, chunks[2]);
 }
 
 /// Render query results
