@@ -32,21 +32,31 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the header with navigation tabs
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["Entities [1]", "Solutions [2]", "Users [3]", "Choices [4]", "Search [G]", "Env [E]"];
-    let selected = match app.view {
-        View::Entities | View::EntityDetail | View::RecordDetail => 0,
+    let titles = vec![
+        "Entities (1)",
+        "Solutions (2)",
+        "Users (3)",
+        "OptionSets (4)",
+        "Sys Jobs (5)",
+        "Global Search (g)",
+        "Env (e)",
+    ];
+
+    let selected_index = match app.view {
+        View::Entities | View::EntityDetail | View::SolutionLayers => 0,
         View::Solutions | View::SolutionDetail => 1,
         View::Users | View::UserDetail => 2,
         View::OptionSets => 3,
-        View::GlobalSearch => 4,
-        View::Environments => 5,
-        View::SolutionLayers => 0,
-        View::FetchXML => 0,
+        View::SystemJobs | View::SystemJobDetail => 4,
+        View::GlobalSearch => 5,
+        View::Environments => 6,
+        View::FetchXML => 0, // FetchXML is a sub-view of Entities for now
+        View::RecordDetail => 0, // RecordDetail is a sub-view of Entities for now
     };
 
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title(" Rynamo "))
-        .select(selected)
+        .select(selected_index)
         .style(Style::default().fg(Color::White))
         .highlight_style(
             Style::default()
@@ -87,6 +97,8 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::Environments => render_environment_switcher(frame, app, area),
             View::SolutionLayers => render_solution_layers(frame, app, area),
             View::FetchXML => render_fetchxml_console(frame, app, area),
+            View::SystemJobs => render_system_job_list(frame, app, area),
+            View::SystemJobDetail => render_system_job_detail(frame, app, area),
         },
     }
 }
@@ -1404,29 +1416,165 @@ fn render_fetchxml_console(frame: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10), // Input area
-            Constraint::Length(3), // Help area
+            Constraint::Length(3),  // Input
+            Constraint::Min(0),     // Results
         ])
         .split(area);
 
-    let input = Paragraph::new(app.fetchxml_query.as_str())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" FetchXML Console ")
-                .border_style(Style::default().fg(Color::Cyan)),
-        );
-    
-    frame.render_widget(input, chunks[0]);
-    
-    // Set cursor position
-    frame.set_cursor_position(Position::new(
-        chunks[0].x + 1 + app.fetchxml_cursor as u16,
-        chunks[0].y + 1,
-    ));
+    // Input area
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .title("FetchXML Query (Press 'Enter' to execute, 'Esc' to exit)")
+        .style(if matches!(app.input_mode, InputMode::FetchXML) {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        });
 
-    let help = Paragraph::new(" Enter: Execute │ Esc: Back │ Ctrl+V: Paste ")
-        .block(Block::default().borders(Borders::ALL));
+    let input = Paragraph::new(app.fetchxml_query.as_str())
+        .block(input_block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(input, chunks[0]);
+
+    // Position cursor
+    if matches!(app.input_mode, InputMode::FetchXML) {
+        frame.set_cursor_position(Position::new(
+            chunks[0].x + app.fetchxml_cursor as u16 + 1,
+            chunks[0].y + 1,
+        ));
+    }
+
+    // Results area
+    render_query_results(frame, app, chunks[1]);
+}
+
+/// Render system job list
+fn render_system_job_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Search
+            Constraint::Min(0),    // List
+            Constraint::Length(3), // Status
+        ])
+        .split(area);
+
+    // Search bar
+    let search_style = if matches!(app.input_mode, InputMode::Search) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
     
-    frame.render_widget(help, chunks[1]);
+    let search_text = if app.search_query.is_empty() {
+        "Type / to search jobs..."
+    } else {
+        &app.search_query
+    };
+
+    let search = Paragraph::new(search_text)
+        .block(Block::default().borders(Borders::ALL).title("Search"))
+        .style(search_style);
+    frame.render_widget(search, chunks[0]);
+
+    // Job List
+    let items: Vec<ListItem> = app
+        .filtered_system_jobs
+        .iter()
+        .map(|&i| {
+            let job = &app.system_jobs[i];
+            let status = job.get_status_label();
+            let style = match job.status_code {
+                Some(30) => Style::default().fg(Color::Green), // Succeeded
+                Some(31) | Some(32) => Style::default().fg(Color::Red), // Failed/Canceled
+                Some(20) | Some(21) => Style::default().fg(Color::Blue), // In Progress
+                _ => Style::default().fg(Color::Yellow), // Waiting
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("{:<30}", job.get_name()), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:<15}", status), style),
+                Span::raw(format!("Started: {}", job.started_on.as_deref().unwrap_or("-"))),
+            ]);
+            
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title("System Jobs"))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.system_job_index));
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+
+    // Filter status
+    let filter_status = format!(
+        "Showing {} of {} jobs",
+        app.filtered_system_jobs.len(),
+        app.system_jobs.len()
+    );
+    let status_bar = Paragraph::new(filter_status)
+        .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(status_bar, chunks[2]);
+}
+
+/// Render system job details
+fn render_system_job_detail(frame: &mut Frame, app: &mut App, area: Rect) {
+    let job = match &app.selected_system_job {
+        Some(j) => j,
+        None => return,
+    };
+
+    let blocks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Min(0),    // Details
+        ])
+        .split(area);
+
+    // Header
+    let header_text = format!("System Job: {}", job.get_name());
+    let header = Paragraph::new(header_text)
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().add_modifier(Modifier::BOLD));
+    frame.render_widget(header, blocks[0]);
+
+    // Details Table
+    let status = job.get_status_label();
+    let state = job.get_state_label();
+    let op_type = job.operation_type.map(|t| t.to_string()).unwrap_or_default();
+
+    let mut rows = vec![
+        Row::new(vec!["Status", &status]),
+        Row::new(vec!["State", &state]),
+        Row::new(vec!["ID", &job.id]),
+        Row::new(vec!["Operation Type", &op_type]),
+        Row::new(vec!["Started On", job.started_on.as_deref().unwrap_or("-")]),
+        Row::new(vec!["Completed On", job.completed_on.as_deref().unwrap_or("-")]),
+        Row::new(vec!["Created On", job.created_on.as_deref().unwrap_or("-")]),
+        Row::new(vec!["Created By", job.created_by_name.as_deref().unwrap_or("-")]),
+        Row::new(vec!["Regarding", job.regarding_object_name.as_deref().unwrap_or("-")]),
+    ];
+    
+    if let Some(msg) = &job.message {
+        if !msg.is_empty() {
+            rows.push(Row::new(vec!["Message", msg]));
+        }
+    }
+    
+    if let Some(friendly) = &job.friendly_message {
+        if !friendly.is_empty() {
+             rows.push(Row::new(vec!["Friendly Message", friendly]));
+        }
+    }
+
+    let table = Table::new(rows, [Constraint::Length(20), Constraint::Percentage(80)])
+        .block(Block::default().borders(Borders::ALL).title("Details"))
+        .column_spacing(2);
+    
+    frame.render_widget(table, blocks[1]);
 }

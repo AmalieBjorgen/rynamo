@@ -1,16 +1,19 @@
-//! Data models for Dataverse metadata
-
-mod entity;
-mod solution;
-mod odata;
-mod user;
-mod query;
-
-pub use entity::{AttributeMetadata, EntityMetadata, RelationshipMetadata, OptionSetMetadata};
-pub use solution::{Solution, SolutionComponent, ComponentType, SolutionComponentLayer};
-pub use odata::ODataResponse;
-pub use user::{SystemUser, Team, SecurityRole, RoleAssignment, RoleSource};
+pub mod entity;
+pub mod solution;
+pub mod user;
 pub mod discovery;
+pub mod query;
+pub mod odata;
+pub mod system_jobs;
 
-pub use discovery::{DiscoveryInstance, DiscoveryResponse};
+pub use entity::{
+    AttributeMetadata, AttributeTypeName, EntityMetadata, LocalizedLabel, OptionSetMetadata,
+    OptionSetValue, RelationshipMetadata, RequiredLevel,
+};
+pub use solution::{Solution, SolutionComponent, ComponentType, SolutionComponentLayer};
+pub use user::{SystemUser, SecurityRole, Team, RoleAssignment, RoleSource};
+pub use discovery::{DiscoveryResponse, DiscoveryInstance};
 pub use query::QueryResult;
+pub use odata::ODataResponse;
+// pub use odata::ODataError; // Assuming ODataError is not pub or missing?
+pub use system_jobs::SystemJob;

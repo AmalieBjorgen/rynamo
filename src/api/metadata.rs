@@ -1,7 +1,8 @@
 //! Entity and attribute metadata API
 
 use super::DataverseClient;
-use crate::models::{AttributeMetadata, EntityMetadata, ODataResponse, RelationshipMetadata, OptionSetMetadata};
+use crate::models::{AttributeMetadata, EntityMetadata, RelationshipMetadata, OptionSetMetadata};
+use crate::models::odata::ODataResponse;
 use anyhow::Result;
 
 impl DataverseClient {

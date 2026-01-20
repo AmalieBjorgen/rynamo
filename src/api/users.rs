@@ -1,7 +1,8 @@
 //! User, Team, and Security Role API endpoints
 
 use super::DataverseClient;
-use crate::models::{ODataResponse, SecurityRole, SystemUser, Team};
+use crate::models::{SecurityRole, SystemUser, Team};
+use crate::models::odata::ODataResponse;
 use anyhow::Result;
 
 impl DataverseClient {

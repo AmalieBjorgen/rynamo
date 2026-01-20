@@ -210,6 +210,15 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
             }
             return Ok(());
         }
+        KeyCode::Char('5') => {
+            if app.view != View::SystemJobs && app.view != View::SystemJobDetail {
+                app.view = View::SystemJobs;
+                if app.system_jobs.is_empty() {
+                    app.load_system_jobs().await;
+                }
+            }
+            return Ok(());
+        }
         KeyCode::Char('g') => {
             app.input_mode = InputMode::Search;
             app.search_query.clear();
@@ -412,6 +421,22 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
             View::RecordDetail => {
                 app.navigate_to_related_record().await;
             }
+            View::SystemJobs => {
+                 if !app.filtered_system_jobs.is_empty() {
+                    let index = app.filtered_system_jobs[app.system_job_index];
+                    app.selected_system_job = Some(app.system_jobs[index].clone());
+                    
+                    // Fetch details to get full message
+                    if let Some(job) = &app.selected_system_job {
+                         let id = job.id.clone();
+                         if let Ok(details) = app.client.get_system_job(&id).await {
+                             app.selected_system_job = Some(details);
+                         }
+                    }
+                    
+                    app.view = View::SystemJobDetail;
+                }
+            }
             _ => {}
         }
     }
@@ -440,6 +465,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
+                View::SystemJobs => app.filter_system_jobs(),
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
@@ -455,6 +481,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
+                View::SystemJobs => app.filter_system_jobs(),
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }

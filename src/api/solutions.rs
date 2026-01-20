@@ -1,7 +1,8 @@
 //! Solution metadata API
 
 use super::DataverseClient;
-use crate::models::{ODataResponse, Solution, SolutionComponent, SolutionComponentLayer};
+use crate::models::{Solution, SolutionComponent, SolutionComponentLayer};
+use crate::models::odata::ODataResponse;
 use anyhow::Result;
 
 impl DataverseClient {

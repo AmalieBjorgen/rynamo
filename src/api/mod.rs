@@ -1,9 +1,8 @@
-//! API module for Dataverse Web API interactions
-
-mod client;
-pub mod metadata;
-pub mod solutions;
+pub mod client;
 pub mod users;
 pub mod data;
+pub mod metadata;
+pub mod solutions;
+pub mod system_jobs;
 
 pub use client::DataverseClient;

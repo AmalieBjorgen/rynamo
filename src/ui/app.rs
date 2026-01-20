@@ -4,7 +4,7 @@ use crate::api::DataverseClient;
 use crate::models::{
     AttributeMetadata, EntityMetadata, QueryResult,
     RelationshipMetadata, RoleAssignment, RoleSource, SecurityRole, Solution, SolutionComponent,
-    ComponentType, SystemUser, Team, OptionSetMetadata,
+    ComponentType, SystemUser, Team, OptionSetMetadata, SystemJob,
 };
 use super::input::{InputMode, KeyBindings};
 use anyhow::Context;
@@ -26,6 +26,8 @@ pub enum View {
     Environments,
     SolutionLayers,
     FetchXML,
+    SystemJobs,
+    SystemJobDetail,
 }
 
 /// Application state for the TUI
@@ -161,6 +163,12 @@ pub struct App {
     pub user_all_roles: Vec<RoleAssignment>,
     pub user_role_index: usize,
     pub user_team_index: usize,
+
+    // System Jobs state
+    pub system_jobs: Vec<SystemJob>,
+    pub filtered_system_jobs: Vec<usize>,
+    pub system_job_index: usize,
+    pub selected_system_job: Option<SystemJob>,
 
     // Guided Query builder state (integrated in Entity Detail)
     pub query_mode: QueryMode,
@@ -345,6 +353,11 @@ impl App {
             record_detail_index: 0,
             message: None,
             should_quit: false,
+            
+            system_jobs: Vec::new(),
+            filtered_system_jobs: Vec::new(),
+            system_job_index: 0,
+            selected_system_job: None,
         }
     }
 
@@ -450,6 +463,24 @@ impl App {
             }
             Err(e) => {
                 self.error = Some(format!("Failed to load users: {}", e));
+                self.state = AppState::Error;
+            }
+        }
+    }
+
+    /// Load system jobs
+    pub async fn load_system_jobs(&mut self) {
+        self.state = AppState::Loading;
+        self.error = None;
+
+        match self.client.get_system_jobs(50).await { // Default to top 50
+            Ok(jobs) => {
+                self.filtered_system_jobs = (0..jobs.len()).collect();
+                self.system_jobs = jobs;
+                self.state = AppState::Ready;
+            }
+            Err(e) => {
+                self.error = Some(format!("Failed to load system jobs: {}", e));
                 self.state = AppState::Error;
             }
         }
@@ -597,6 +628,26 @@ impl App {
         self.user_index = 0;
     }
 
+    /// Apply search filter to system jobs
+    pub fn filter_system_jobs(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered_system_jobs = (0..self.system_jobs.len()).collect();
+        } else {
+            self.filtered_system_jobs = self
+                .system_jobs
+                .iter()
+                .enumerate()
+                .filter(|(_, job)| {
+                    job.get_name().to_lowercase().contains(&query) 
+                    || job.get_status_label().to_lowercase().contains(&query)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.system_job_index = 0;
+    }
+
     /// Navigate up in the current list
     pub fn navigate_up(&mut self) {
         match self.view {
@@ -692,6 +743,12 @@ impl App {
                     self.solution_layers_index -= 1;
                 }
             }
+            View::SystemJobs => {
+                if self.system_job_index > 0 {
+                    self.system_job_index -= 1;
+                }
+            }
+            View::SystemJobDetail => {}
         }
     }
 
@@ -792,6 +849,14 @@ impl App {
                     self.component_index += 1;
                 }
             }
+            View::SystemJobs => {
+                if !self.filtered_system_jobs.is_empty()
+                    && self.system_job_index < self.filtered_system_jobs.len() - 1
+                {
+                    self.system_job_index += 1;
+                }
+            }
+            View::SystemJobDetail => {}
             View::RecordDetail => {
                 if !self.query_result.columns.is_empty()
                     && self.record_detail_index < self.query_result.columns.len() - 1
