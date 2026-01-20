@@ -473,11 +473,11 @@ impl App {
     }
 
     /// Load system jobs
-    pub async fn load_system_jobs(&mut self) {
+    pub async fn load_system_jobs(&mut self, filter: Option<&str>) {
         self.state = AppState::Loading;
         self.error = None;
 
-        match self.client.get_system_jobs(50).await { // Default to top 50
+        match self.client.get_system_jobs(50, filter).await { // Default to top 50
             Ok((jobs, next_link)) => {
                 self.filtered_system_jobs = (0..jobs.len()).collect();
                 self.system_jobs = jobs;
@@ -488,6 +488,46 @@ impl App {
                 self.error = Some(format!("Failed to load system jobs: {}", e));
                 self.state = AppState::Error;
             }
+        }
+    }
+    
+    /// Search system jobs (server-side)
+    pub async fn search_system_jobs(&mut self) {
+        let query = self.search_query.trim().to_lowercase();
+        if query.is_empty() {
+             self.load_system_jobs(None).await;
+             return;
+        }
+        
+        // Construct OData filter
+        // Simple heuristic: check if it matches a status, otherwise search name
+        let status_code = match query.as_str() {
+            "succeeded" | "success" => Some(30),
+            "failed" | "fail" => Some(31),
+            "canceled" | "cancelled" => Some(32),
+            "waiting" | "wait" => Some(10),
+            "in progress" | "running" => Some(20),
+            "paused" | "pausing" => Some(21),
+            _ => None,
+        };
+        
+        let mut filter = String::new();
+        if let Some(code) = status_code {
+            filter = format!("statuscode eq {}", code);
+        } else {
+            filter = format!("contains(name, '{}')", query);
+        }
+        
+        self.load_system_jobs(Some(&filter)).await;
+    }
+    
+    /// Refresh system jobs
+    pub async fn refresh_system_jobs(&mut self) {
+        // If we have a search query, re-run search, otherwise load default
+        if self.search_query.is_empty() {
+            self.load_system_jobs(None).await;
+        } else {
+            self.search_system_jobs().await;
         }
     }
     

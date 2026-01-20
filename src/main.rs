@@ -145,7 +145,7 @@ async fn run_app(
 
                 match app.input_mode {
                     InputMode::Normal => handle_normal_mode(app, key.code).await?,
-                    InputMode::Search => handle_search_mode(app, key.code),
+                    InputMode::Search => handle_search_mode(app, key.code).await?,
                     InputMode::FetchXML => handle_fetchxml_mode(app, key.code).await?,
                 }
 
@@ -219,7 +219,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
             if app.view != View::SystemJobs && app.view != View::SystemJobDetail {
                 app.view = View::SystemJobs;
                 if app.system_jobs.is_empty() {
-                    app.load_system_jobs().await;
+                    app.load_system_jobs(None).await;
                 }
             }
             return Ok(());
@@ -446,6 +446,14 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
         }
     }
 
+    // Refresh for System Jobs
+    if app.view == View::SystemJobs {
+        if key == KeyCode::Char('r') || key == KeyCode::Char('R') {
+            app.refresh_system_jobs().await;
+            return Ok(());
+        }
+    }
+
     // Tab key for switching tabs
     if key == KeyCode::Tab {
         app.next_tab();
@@ -458,7 +466,7 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
 }
 
 /// Handle input in search mode
-fn handle_search_mode(app: &mut App, key: KeyCode) {
+async fn handle_search_mode(app: &mut App, key: KeyCode) -> Result<()> {
     match key {
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
@@ -470,15 +478,16 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
-                View::SystemJobs => app.filter_system_jobs(),
+                View::SystemJobs => app.search_system_jobs().await,
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
         }
         KeyCode::Esc => {
+             // ... existing code ...
+             // Reset filters
             app.input_mode = InputMode::Normal;
             app.search_query.clear();
-            // Reset filters
             match app.view {
                 View::Entities => app.filter_entities(),
                 View::EntityDetail => app.filter_attributes(),
@@ -486,7 +495,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
                 View::SolutionDetail => app.filter_solution_components(),
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
-                View::SystemJobs => app.filter_system_jobs(),
+                View::SystemJobs => app.load_system_jobs(None).await,
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
@@ -499,6 +508,7 @@ fn handle_search_mode(app: &mut App, key: KeyCode) {
         }
         _ => {}
     }
+    Ok(())
 }
 
 /// Handle input in FetchXML mode

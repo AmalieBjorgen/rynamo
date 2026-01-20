@@ -10,10 +10,18 @@ impl DataverseClient {
     /// # Arguments
     /// 
     /// * `top` - Max number of jobs to retrieve
-    pub async fn get_system_jobs(&self, top: usize) -> Result<(Vec<SystemJob>, Option<String>)> {
+    /// * `filter` - Optional OData filter string
+    pub async fn get_system_jobs(&self, top: usize, filter: Option<&str>) -> Result<(Vec<SystemJob>, Option<String>)> {
         let select = "asyncoperationid,name,operationtype,statuscode,statecode,startedon,completedon,createdon,_createdby_value,message,friendlymessage,_regardingobjectid_value";
         let order_by = "createdon desc";
-        let query = format!("asyncoperations?$select={}&$orderby={}&$top={}", select, order_by, top);
+        
+        let mut query = format!("asyncoperations?$select={}&$orderby={}&$top={}", select, order_by, top);
+        
+        if let Some(f) = filter {
+            if !f.is_empty() {
+                query.push_str(&format!("&$filter={}", f));
+            }
+        }
 
         let response: crate::models::odata::ODataResponse<SystemJob> = self.get_json(&query).await?;
         Ok((response.value, response.next_link))
