@@ -442,6 +442,9 @@ async fn handle_normal_mode(app: &mut App, key: KeyCode) -> Result<()> {
                     app.view = View::SystemJobDetail;
                 }
             }
+            View::EnvironmentDiscovery => {
+                let _ = app.add_selected_discovery().await;
+            }
             _ => {}
         }
     }
@@ -479,6 +482,7 @@ async fn handle_search_mode(app: &mut App, key: KeyCode) -> Result<()> {
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
                 View::SystemJobs => app.search_system_jobs().await,
+                View::EnvironmentDiscovery => app.filter_discovered_environments(),
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }
@@ -496,6 +500,7 @@ async fn handle_search_mode(app: &mut App, key: KeyCode) -> Result<()> {
                 View::Users => app.filter_users(),
                 View::OptionSets => app.filter_optionsets(),
                 View::SystemJobs => app.load_system_jobs(None).await,
+                View::EnvironmentDiscovery => app.filter_discovered_environments(),
                 View::GlobalSearch => app.execute_global_search(),
                 _ => {}
             }

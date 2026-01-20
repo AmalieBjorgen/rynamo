@@ -52,6 +52,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         View::Environments => 6,
         View::FetchXML => 0, // FetchXML is a sub-view of Entities for now
         View::RecordDetail => 0, // RecordDetail is a sub-view of Entities for now
+        View::EnvironmentDiscovery => 6,
     };
 
     let tabs = Tabs::new(titles)
@@ -99,6 +100,7 @@ fn render_content(frame: &mut Frame, app: &mut App, area: Rect) {
             View::FetchXML => render_fetchxml_console(frame, app, area),
             View::SystemJobs => render_system_job_list(frame, app, area),
             View::SystemJobDetail => render_system_job_detail(frame, app, area),
+            View::EnvironmentDiscovery => render_environment_discovery(frame, app, area),
         },
     }
 }
@@ -1512,7 +1514,7 @@ fn render_system_job_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
                 .bottom_margin(1)
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     let mut state = TableState::default();
     state.select(Some(app.system_job_index));
@@ -1594,4 +1596,84 @@ fn render_system_job_detail(frame: &mut Frame, app: &mut App, area: Rect) {
         .column_spacing(2);
     
     frame.render_widget(table, blocks[1]);
+}
+
+/// Render environment discovery view
+fn render_environment_discovery(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Search
+            Constraint::Min(0),    // List
+            Constraint::Length(3), // Status/Help
+        ])
+        .split(area);
+
+    // Search bar
+    let search_style = if matches!(app.input_mode, InputMode::Search) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    
+    let search_text = if app.search_query.is_empty() {
+        "Type / to search discovered environments..."
+    } else {
+        &app.search_query
+    };
+
+    let search = Paragraph::new(search_text)
+        .block(Block::default().borders(Borders::ALL).title(" Search Environments "))
+        .style(search_style);
+    frame.render_widget(search, chunks[0]);
+
+    // Discovery List
+    let rows: Vec<Row> = app
+        .filtered_discovery_results
+        .iter()
+        .map(|&i| {
+            let inst = &app.discovered_environments[i];
+            let is_added = app.config.environments.contains(&inst.url.trim_end_matches('/').to_string());
+            
+            let name_style = if is_added {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default().add_modifier(Modifier::BOLD)
+            };
+
+            Row::new(vec![
+                Span::styled(&inst.friendly_name, name_style),
+                Span::raw(&inst.url),
+                Span::raw(&inst.region),
+                Span::raw(if is_added { "Added" } else { "" }),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Percentage(30),
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(10),
+    ];
+
+    let table = Table::new(rows, widths)
+        .block(Block::default().borders(Borders::ALL).title(" Discovered Environments "))
+        .header(
+            Row::new(vec!["Name", "URL", "Region", "Status"])
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .bottom_margin(1)
+        )
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+    let mut state = TableState::default();
+    state.select(Some(app.discovery_index));
+    frame.render_stateful_widget(table, chunks[1], &mut state);
+
+    // Help text
+    let help_text = " Enter: Add & Switch │ /: Search │ Esc: Back ";
+    let help = Paragraph::new(help_text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(help, chunks[2]);
 }

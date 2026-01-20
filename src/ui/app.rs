@@ -28,6 +28,7 @@ pub enum View {
     FetchXML,
     SystemJobs,
     SystemJobDetail,
+    EnvironmentDiscovery,
 }
 
 /// Application state for the TUI
@@ -140,6 +141,9 @@ pub struct App {
     // Environment state
     pub config: crate::config::Config,
     pub environment_index: usize,
+    pub discovered_environments: Vec<crate::models::DiscoveryInstance>,
+    pub filtered_discovery_results: Vec<usize>,
+    pub discovery_index: usize,
 
     // Solution layers state
     pub solution_layers: Vec<crate::models::SolutionComponentLayer>,
@@ -322,6 +326,9 @@ impl App {
             global_search_index: 0,
             config: crate::config::Config::default(),
             environment_index: 0,
+            discovered_environments: Vec::new(),
+            filtered_discovery_results: Vec::new(),
+            discovery_index: 0,
             solution_layers: Vec::new(),
             solution_layers_index: 0,
             fetchxml_query: String::new(),
@@ -511,12 +518,11 @@ impl App {
             _ => None,
         };
         
-        let mut filter = String::new();
-        if let Some(code) = status_code {
-            filter = format!("statuscode eq {}", code);
+        let filter = if let Some(code) = status_code {
+            format!("statuscode eq {}", code)
         } else {
-            filter = format!("contains(name, '{}')", query);
-        }
+            format!("contains(name, '{}')", query)
+        };
         
         self.load_system_jobs(Some(&filter)).await;
     }
@@ -541,7 +547,6 @@ impl App {
         // Don't set loading state to avoid flickering, just append
         match self.client.get_next_page_system_jobs(&next_link).await {
             Ok((mut new_jobs, new_next_link)) => {
-                let start_index = self.system_jobs.len();
                 self.system_jobs.append(&mut new_jobs);
                 
                 // Append to filtered list if no filter is active. 
@@ -823,6 +828,11 @@ impl App {
                 }
             }
             View::SystemJobDetail => {}
+            View::EnvironmentDiscovery => {
+                if self.discovery_index > 0 {
+                    self.discovery_index -= 1;
+                }
+            }
         }
     }
 
@@ -938,6 +948,13 @@ impl App {
                 }
             }
             View::SystemJobDetail => {}
+            View::EnvironmentDiscovery => {
+                if !self.filtered_discovery_results.is_empty()
+                    && self.discovery_index < self.filtered_discovery_results.len() - 1
+                {
+                    self.discovery_index += 1;
+                }
+            }
             View::RecordDetail => {
                 if !self.query_result.columns.is_empty()
                     && self.record_detail_index < self.query_result.columns.len() - 1
@@ -1608,25 +1625,19 @@ impl App {
         self.switch_environment(&url).await
     }
 
-    /// Discover and add all available environments
+    /// Discover available environments using Global Discovery Service
     pub async fn discover_environments(&mut self) -> anyhow::Result<()> {
         self.state = AppState::Loading;
         self.message = Some("Discovering environments...".to_string());
         
         match self.client.discover_environments().await {
             Ok(instances) => {
-                let mut added_count = 0;
-                for instance in instances {
-                    let url = instance.url.trim_end_matches('/').to_string();
-                    if !self.config.environments.contains(&url) {
-                        self.config.environments.push(url);
-                        added_count += 1;
-                    }
-                }
-                
-                let _ = self.config.save();
-                self.message = Some(format!("Discovered {} new environments", added_count));
+                self.discovered_environments = instances;
+                self.filter_discovered_environments();
+                self.view = View::EnvironmentDiscovery;
+                self.discovery_index = 0;
                 self.state = AppState::Ready;
+                self.message = None;
                 Ok(())
             }
             Err(e) => {
@@ -1635,6 +1646,39 @@ impl App {
                 Err(e)
             }
         }
+    }
+
+    /// Filter discovered environments
+    pub fn filter_discovered_environments(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered_discovery_results = (0..self.discovered_environments.len()).collect();
+        } else {
+            self.filtered_discovery_results = self
+                .discovered_environments
+                .iter()
+                .enumerate()
+                .filter(|(_, inst)| {
+                    inst.friendly_name.to_lowercase().contains(&query)
+                        || inst.url.to_lowercase().contains(&query)
+                        || inst.unique_name.to_lowercase().contains(&query)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.discovery_index = 0;
+    }
+
+    /// Add selected discovered environment to config and switch
+    pub async fn add_selected_discovery(&mut self) -> anyhow::Result<()> {
+        let Some(idx) = self.filtered_discovery_results.get(self.discovery_index) else {
+            return Ok(());
+        };
+        
+        let instance = &self.discovered_environments[*idx];
+        let url = instance.url.trim_end_matches('/').to_string();
+        
+        self.add_new_environment(url).await
     }
 
     /// Load solution layers for the current component

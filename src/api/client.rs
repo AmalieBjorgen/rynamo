@@ -93,7 +93,7 @@ impl DataverseClient {
         // Global Discovery Service endpoint
         let disco_url = "https://globaldisco.crm.dynamics.com/api/discovery/v2.0/Instances";
         // Scope for the discovery service
-        let scope = "https://common.crm.dynamics.com//.default";
+        let scope = "https://globaldisco.crm.dynamics.com/.default";
 
         let token = self.authenticator.get_token_for_scope(scope).await?;
 
